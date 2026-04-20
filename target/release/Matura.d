@@ -1,0 +1,1 @@
+/Users/rubenlauff/programming/Own/Rust/Matura/target/release/Matura: /Users/rubenlauff/programming/Own/Rust/Matura/src/Fourier/mod.rs /Users/rubenlauff/programming/Own/Rust/Matura/src/Fourier/split_audio.rs /Users/rubenlauff/programming/Own/Rust/Matura/src/main.rs
