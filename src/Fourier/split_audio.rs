@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 
 // This function splits a given wave file of format Vec<f32> into segments
-// that are frame_size long. The overlap is calculated through hop_size-frame_size,
+// that are frame_size long. The overlap is calculated through frame_size-hop_size,
 // this is good to keep in mind :)
 pub fn split_audio(audio: Vec<f32>, frame_size: usize, hop_size: usize) -> Vec<Vec<f32>> {
     let mut i: usize = 0;
