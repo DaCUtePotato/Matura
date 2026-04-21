@@ -17,3 +17,10 @@ pub fn ft(audio: Vec<f32>) -> Vec<Complex<f32>> {
     }
     result
 }
+
+pub fn normVecVecComplex(complexed: &[Vec<Complex<f32>>]) -> Vec<Vec<f32>> {
+    complexed
+        .iter()
+        .map(|s| s.iter().map(|c| c.norm()).collect::<Vec<f32>>())
+        .collect::<Vec<Vec<f32>>>()
+}

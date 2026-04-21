@@ -28,6 +28,27 @@ pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f32> {
     }
 }
 
+// Holy complex, this tapers the ends of the frames by basically scaling the samples
+// by a squared sine wave (sin^2(πk/N)=0.5 * (1 - cos(2πk/N))) so the frame doesn't
+// get cut off but instead gets scaled by a more extreme sine curve :3
+// This prevents spectral leakage
+pub fn Hann(audio: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    audio
+        .iter()
+        .map(|s| {
+            s.iter()
+                .enumerate()
+                .map(|(k, sample)| {
+                    sample
+                        * (std::f32::consts::PI * k as f32 / (s.len() as f32 - 1.))
+                            .sin()
+                            .powi(2)
+                })
+                .collect()
+        })
+        .collect()
+}
+
 // Testing :3
 //
 // fn main() {
