@@ -32,7 +32,7 @@ pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f32> {
 // by a squared sine wave (sin^2(πk/N)=0.5 * (1 - cos(2πk/N))) so the frame doesn't
 // get cut off but instead gets scaled by a more extreme sine curve :3
 // This prevents spectral leakage
-pub fn Hann(audio: &[Vec<f32>]) -> Vec<Vec<f32>> {
+pub fn hann(audio: &[Vec<f32>]) -> Vec<Vec<f32>> {
     audio
         .iter()
         .map(|s| {
