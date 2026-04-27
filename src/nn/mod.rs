@@ -1,1 +1,1 @@
-pub mod lstm;
+pub mod model;
