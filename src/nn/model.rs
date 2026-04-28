@@ -1,6 +1,7 @@
 // This file prepares everything needed to implement the lstm model like sigmoid operations, a generic neural network and vector operations :)
 use rand::RngExt;
 use rand::distr::Uniform;
+use std::collections::HashMap;
 use std::f64;
 
 pub fn sigmoid(aaaaa: &[f64]) -> Vec<f64> {
@@ -64,6 +65,14 @@ pub fn xavier_value(num_inputs: &i64, num_outputs: &i64) -> f64 {
     let mut rng = rand::rng();
     let range: f64 = f64::sqrt(6. / (*num_inputs as f64 + *num_outputs as f64));
     rng.sample(Uniform::new(-range, range).unwrap())
+}
+
+pub fn loss(output: &[f64], actual: &[f64]) -> f64 {
+    let mut sum: f64 = 0.;
+    for (i, _) in output.iter().enumerate().filter(|(_, s)| **s > 0.5) {
+        sum += -actual[i] * output[i].ln();
+    }
+    sum
 }
 
 // extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
@@ -145,6 +154,15 @@ impl ClassificationHead {
     pub fn new(num_memory_lane: &i64, num_classes: &i64) -> Self {
         ClassificationHead {
             n: NN::new(num_memory_lane, num_classes),
+        }
+    }
+    pub fn gitgud(&mut self, learning_rate: &f64, actual: &[f64], output: &[f64], input: &[f64]) {
+        for i in 0..self.n.weights.len() {
+            for j in 0..self.n.weights[i].len() {
+                // Review and understand exactly what the hell is going on with this goofy aah
+                // gradient
+                self.n.weights[i][j] -= learning_rate * (output[i] - actual[i]) * input[j];
+            }
         }
     }
 }
