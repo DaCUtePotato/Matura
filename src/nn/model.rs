@@ -143,7 +143,9 @@ impl LSTM {
         }
     }
     // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
-    pub fn gitgud(classification_head_gradient:&[f64]) {}
+    pub fn gitgud(classification_head_gradient:&[f64], saved_hidden_states: LSTMHiddenState) {
+
+    }
 }
 
 pub struct ClassificationHead {
@@ -187,6 +189,19 @@ impl ClassificationHead {
     }
 }
 
+// Yet another struct because of the stupid hidden states that have to be saved
+// in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
+struct LSTMHiddenState{
+    input: Vec<f64>,
+    memory_lane: Vec<f64>,
+    main_lane: Vec<f64>,
+    s1: Vec<f64>, // The output of the Sigmoid 1
+    s2: Vec<f64>, // Same here but for Sigmoid 2
+    t: Vec<f64>, // lo and behold a tanh!
+    s3: Vec<f64>, // You'll never guess...
+}
+
+
 pub struct Model {
     num_memory_lane: usize,
     classification_head: ClassificationHead,
@@ -229,6 +244,7 @@ impl Model {
         output: &[f64],
         actual: &[f64],
         last_main_lane: &[f64],
+        saved_hidden_states: LSTMHiddenState,
     ) {
         let classification_head_gradient = ClassificationHead::gitgud(
             &mut self.classification_head,
@@ -237,6 +253,6 @@ impl Model {
             output,
             last_main_lane,
         );
-        LSTM::gitgud(classification_head_gradient) {}
+        LSTM::gitgud(&classification_head_gradient, saved_hidden_states) {}
     }
 }
