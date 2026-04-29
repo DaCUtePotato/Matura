@@ -1,7 +1,8 @@
-// This file prepares everything needed to implement the lstm model like sigmoid operations, a generic neural network and vector operations :)
+// This file contains all the prerequisites and the model. It alone doesn't do anything
+// and the model has to be created in main.rs and run/trained there too. This is just
+// for all the framework and functions and stuff
 use rand::RngExt;
 use rand::distr::Uniform;
-use std::collections::HashMap;
 use std::f64;
 
 pub fn sigmoid(aaaaa: &[f64]) -> Vec<f64> {
@@ -141,6 +142,8 @@ impl LSTM {
             s3: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
         }
     }
+    // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
+    pub fn gitgud(classification_head_gradient:&[f64]) {}
 }
 
 pub struct ClassificationHead {
@@ -156,14 +159,31 @@ impl ClassificationHead {
             n: NN::new(num_memory_lane, num_classes),
         }
     }
-    pub fn gitgud(&mut self, learning_rate: &f64, actual: &[f64], output: &[f64], input: &[f64]) {
+    // Backprop for the ClassificationHead
+    pub fn gitgud(
+        &mut self,
+        learning_rate: &f64,
+        actual: &[f64],
+        output: &[f64],
+        input: &[f64],
+    ) -> Vec<f64> {
+        let mut new_loss: Vec<f64> = vec![];
+        for i in 0..input.len() {
+            let mut sum = 0.;
+            for j in 0..self.n.weights.len() {
+                sum += (output[j] - actual[j]) * self.n.weights[j][i];
+            }
+            new_loss.push(sum);
+        }
         for i in 0..self.n.weights.len() {
             for j in 0..self.n.weights[i].len() {
                 // Review and understand exactly what the hell is going on with this goofy aah
                 // gradient
                 self.n.weights[i][j] -= learning_rate * (output[i] - actual[i]) * input[j];
             }
+            self.n.biases[i] -= learning_rate * (output[i] - actual[i]);
         }
+        new_loss
     }
 }
 
@@ -181,6 +201,7 @@ impl Model {
             lstm: LSTM::new(frame_size, num_memory_lane),
         }
     }
+    // This is a normal run
     pub fn forward(&self, frames: &[Vec<f64>]) -> Vec<f64> {
         let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
         let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
@@ -189,5 +210,33 @@ impl Model {
                 LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
         }
         ClassificationHead::forward(&self.classification_head, &main_lane)
+    }
+    // This is where u pull all the stuff u need to backprop
+    pub fn train_forward(&self, frames: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
+        let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        for frame in frames {
+            (main_lane, memory_lane) =
+                LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
+        }
+        let output = ClassificationHead::forward(&self.classification_head, &main_lane);
+        (main_lane, output)
+    }
+    // This is where u call the backprops
+    pub fn gitgud(
+        &mut self,
+        learning_rate: &f64,
+        output: &[f64],
+        actual: &[f64],
+        last_main_lane: &[f64],
+    ) {
+        let classification_head_gradient = ClassificationHead::gitgud(
+            &mut self.classification_head,
+            learning_rate,
+            actual,
+            output,
+            last_main_lane,
+        );
+        LSTM::gitgud(classification_head_gradient) {}
     }
 }
