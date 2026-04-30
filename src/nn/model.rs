@@ -142,9 +142,33 @@ impl LSTM {
             s3: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
         }
     }
-    // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
-    pub fn gitgud(classification_head_gradient:&[f64], saved_hidden_states: LSTMHiddenState) {
+    pub fn training_forward_pass(
+        &self,
+        memory_lane: &[f64],
+        main_lane: &[f64],
+        input: &[f64],
+    ) -> LSTMHiddenState {
+        let concatified = concatify(main_lane, input);
+        let s1 = sigmoid(&self.s1.forward(&concatified));
+        let s2 = sigmoid(&self.s2.forward(&concatified));
+        let s3 = sigmoid(&self.s3.forward(&concatified));
+        let t = tanh(&self.t.forward(&concatified));
+        let memory_lane = add(&multiply(&s1, memory_lane), &multiply(&s2, &t));
+        let output = multiply(&tanh(&memory_lane), &s3);
+        LSTMHiddenState {
+            input: input.to_vec(),
+            memory_lane,
+            main_lane: output,
+            s1,
+            s2,
+            t,
+            s3,
+        }
+    }
 
+    // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
+    pub fn gitgud(&self, a_t: &[f64], saved_hidden_states: &[LSTMHiddenState]) {
+        for i in saved_hidden_states {}
     }
 }
 
@@ -191,16 +215,15 @@ impl ClassificationHead {
 
 // Yet another struct because of the stupid hidden states that have to be saved
 // in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
-struct LSTMHiddenState{
+struct LSTMHiddenState {
     input: Vec<f64>,
     memory_lane: Vec<f64>,
     main_lane: Vec<f64>,
     s1: Vec<f64>, // The output of the Sigmoid 1
     s2: Vec<f64>, // Same here but for Sigmoid 2
-    t: Vec<f64>, // lo and behold a tanh!
+    t: Vec<f64>,  // lo and behold a tanh!
     s3: Vec<f64>, // You'll never guess...
 }
-
 
 pub struct Model {
     num_memory_lane: usize,
@@ -227,15 +250,20 @@ impl Model {
         ClassificationHead::forward(&self.classification_head, &main_lane)
     }
     // This is where u pull all the stuff u need to backprop
-    pub fn train_forward(&self, frames: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
-        let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
-        let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+    pub fn train_forward(&self, frames: &[Vec<f64>]) -> (Vec<LSTMHiddenState>, Vec<f64>) {
+        let memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        let main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        let mut hidden_states: Vec<LSTMHiddenState> = vec![];
         for frame in frames {
-            (main_lane, memory_lane) =
-                LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
+            hidden_states.push(LSTM::training_forward_pass(
+                &self.lstm,
+                &memory_lane,
+                &main_lane,
+                frame,
+            ));
         }
         let output = ClassificationHead::forward(&self.classification_head, &main_lane);
-        (main_lane, output)
+        (hidden_states, output)
     }
     // This is where u call the backprops
     pub fn gitgud(
@@ -243,16 +271,15 @@ impl Model {
         learning_rate: &f64,
         output: &[f64],
         actual: &[f64],
-        last_main_lane: &[f64],
-        saved_hidden_states: LSTMHiddenState,
+        saved_hidden_states: &[LSTMHiddenState],
     ) {
         let classification_head_gradient = ClassificationHead::gitgud(
             &mut self.classification_head,
             learning_rate,
             actual,
             output,
-            last_main_lane,
+            &saved_hidden_states[saved_hidden_states.len()].main_lane,
         );
-        LSTM::gitgud(&classification_head_gradient, saved_hidden_states) {}
+        LSTM::gitgud(&classification_head_gradient, &saved_hidden_states);
     }
 }
