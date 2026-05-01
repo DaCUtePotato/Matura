@@ -76,6 +76,54 @@ pub fn loss(output: &[f64], actual: &[f64]) -> f64 {
     sum
 }
 
+pub fn transmatmult(matrix: &[Vec<f64>], vector: &[f64]) -> Vec<f64> {
+    let mut result: Vec<f64> = vec![0.0; matrix[0].len()];
+    for (i, row) in matrix.iter().enumerate() {
+        for (j, &value) in row.iter().enumerate() {
+            result[j] += value * vector[i];
+        }
+    }
+    result
+}
+
+pub fn update_weights(
+    weights: &[Vec<f64>],
+    gradient: &[Vec<f64>],
+    learning_rate: &f64,
+) -> Vec<Vec<f64>> {
+    weights
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            row.iter()
+                .enumerate()
+                .map(|(j, &w)| w - gradient[i][j] * learning_rate)
+                .collect()
+        })
+        .collect()
+}
+
+pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> Vec<Vec<f64>> {
+    vector1
+        .iter()
+        .map(|&s| vector2.iter().map(|&g| g * s).collect())
+        .collect()
+}
+
+pub fn madd(matrix1: &[Vec<f64>], matrix2: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    matrix1
+        .iter()
+        .zip(matrix2.iter())
+        .map(|(val1, val2)| add(&val1, &val2))
+        .collect()
+}
+
+// Not yet used but may come in handy if the model starts producing NaN (since
+// gradients can explode)
+pub fn clip(gradient: &f64) -> f64 {
+    gradient.max(0.5).min(-0.5)
+}
+
 // extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
 pub struct NN {
     weights: Vec<Vec<f64>>,
@@ -147,28 +195,175 @@ impl LSTM {
         memory_lane: &[f64],
         main_lane: &[f64],
         input: &[f64],
-    ) -> LSTMHiddenState {
+    ) -> (LSTMHiddenState, Vec<f64>, Vec<f64>) {
         let concatified = concatify(main_lane, input);
         let s1 = sigmoid(&self.s1.forward(&concatified));
         let s2 = sigmoid(&self.s2.forward(&concatified));
         let s3 = sigmoid(&self.s3.forward(&concatified));
-        let t = tanh(&self.t.forward(&concatified));
-        let memory_lane = add(&multiply(&s1, memory_lane), &multiply(&s2, &t));
+        let t = self.t.forward(&concatified);
+        let memory_lane = add(&multiply(&s1, memory_lane), &multiply(&s2, &tanh(&t)));
         let output = multiply(&tanh(&memory_lane), &s3);
-        LSTMHiddenState {
-            input: input.to_vec(),
+        (
+            LSTMHiddenState {
+                input: concatified,
+                memory_lane: memory_lane.clone(),
+                main_lane: output.clone(),
+                s1,
+                s2,
+                t,
+                s3,
+            },
             memory_lane,
-            main_lane: output,
-            s1,
-            s2,
-            t,
-            s3,
-        }
+            output,
+        )
     }
 
     // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
-    pub fn gitgud(&self, a_t: &[f64], saved_hidden_states: &[LSTMHiddenState]) {
-        for i in saved_hidden_states {}
+    pub fn gitgud(
+        &mut self,
+        a_t: &[f64],
+        saved_hidden_states: &[LSTMHiddenState],
+        learning_rate: &f64,
+    ) {
+        let input_size = saved_hidden_states[0].input.len();
+        let gate_size = saved_hidden_states[0].main_lane.len();
+
+        let mut sum_s1: Vec<Vec<f64>> = vec![vec![0.; input_size]; gate_size];
+        let mut sum_s2: Vec<Vec<f64>> = sum_s1.clone();
+        let mut sum_s3: Vec<Vec<f64>> = sum_s1.clone();
+        let mut sum_t: Vec<Vec<f64>> = sum_s1.clone();
+
+        let mut bias_grad_s1 = vec![0.; gate_size];
+        let mut bias_grad_s2 = bias_grad_s1.clone();
+        let mut bias_grad_s3 = bias_grad_s1.clone();
+        let mut bias_grad_t = bias_grad_s1.clone();
+
+        let mut c = multiply(
+            a_t,
+            &multiply(
+                &saved_hidden_states[saved_hidden_states.len() - 1].s3,
+                &tanh(&saved_hidden_states[saved_hidden_states.len() - 1].memory_lane)
+                    .iter()
+                    .map(|s| 1. - s.powf(2.))
+                    .collect::<Vec<f64>>(),
+            ),
+        );
+        let mut a_t = a_t.to_vec();
+        for (i, state) in saved_hidden_states.iter().rev().enumerate() {
+            let c_prev = if i + 1 < saved_hidden_states.len() {
+                saved_hidden_states[saved_hidden_states.len() - i - 2]
+                    .memory_lane
+                    .clone()
+            } else {
+                vec![0.; state.memory_lane.len()]
+            };
+            let dc_bob: Vec<f64> = multiply(&c, &state.s2);
+            let c_bob: Vec<f64> = tanh(&state.t);
+            let t: Vec<f64> = multiply(
+                &dc_bob,
+                &(tanh(&state.t)
+                    .iter()
+                    .map(|s| 1. - s.powf(2.))
+                    .collect::<Vec<f64>>()),
+            );
+            let s1 = multiply(
+                &c,
+                &multiply(
+                    &c_prev,
+                    &multiply(
+                        &state.s1,
+                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+            );
+            let s2 = multiply(
+                &c,
+                &multiply(
+                    &c_bob,
+                    &multiply(
+                        &state.s2,
+                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+            );
+            let s3 = multiply(
+                &multiply(
+                    &a_t,
+                    &multiply(
+                        &state.s3,
+                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+                &tanh(&state.memory_lane),
+            );
+            sum_s1 = madd(&outer_product(&s1, &state.input), &sum_s1);
+            sum_s2 = madd(&outer_product(&s2, &state.input), &sum_s2);
+            sum_s3 = madd(&outer_product(&s3, &state.input), &sum_s3);
+            sum_t = madd(&outer_product(&t, &state.input), &sum_t);
+
+            bias_grad_s1 = add(&bias_grad_s1, &s1);
+            bias_grad_s2 = add(&bias_grad_s2, &s2);
+            bias_grad_s3 = add(&bias_grad_s3, &s3);
+            bias_grad_t = add(&bias_grad_t, &t);
+
+            let c_forgotten = multiply(&c, &state.s1);
+            c = add(
+                &c_forgotten,
+                &multiply(
+                    &a_t,
+                    &multiply(
+                        &state.s3,
+                        &tanh(&state.memory_lane)
+                            .iter()
+                            .map(|s| 1. - s.powf(2.))
+                            .collect::<Vec<f64>>(),
+                    ),
+                ),
+            );
+            a_t = add(
+                &add(
+                    &transmatmult(&self.s1.weights, &s1),
+                    &transmatmult(&self.s2.weights, &s2),
+                ),
+                &add(
+                    &transmatmult(&self.s3.weights, &s3),
+                    &transmatmult(&self.t.weights, &t),
+                ),
+            )[..state.main_lane.len()]
+                .to_vec();
+        }
+        self.s1.weights = update_weights(&self.s1.weights, &sum_s1, &learning_rate);
+        self.s2.weights = update_weights(&self.s2.weights, &sum_s2, &learning_rate);
+        self.s3.weights = update_weights(&self.s3.weights, &sum_s3, &learning_rate);
+        self.t.weights = update_weights(&self.t.weights, &sum_t, &learning_rate);
+        self.s1.biases = add(
+            &self.s1.biases,
+            &bias_grad_s1
+                .iter()
+                .map(|s| -s * learning_rate)
+                .collect::<Vec<f64>>(),
+        );
+        self.s2.biases = add(
+            &self.s2.biases,
+            &bias_grad_s2
+                .iter()
+                .map(|s| -s * learning_rate)
+                .collect::<Vec<f64>>(),
+        );
+        self.s3.biases = add(
+            &self.s3.biases,
+            &bias_grad_s3
+                .iter()
+                .map(|s| -s * learning_rate)
+                .collect::<Vec<f64>>(),
+        );
+        self.t.biases = add(
+            &self.t.biases,
+            &bias_grad_t
+                .iter()
+                .map(|s| -s * learning_rate)
+                .collect::<Vec<f64>>(),
+        );
     }
 }
 
@@ -215,13 +410,13 @@ impl ClassificationHead {
 
 // Yet another struct because of the stupid hidden states that have to be saved
 // in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
-struct LSTMHiddenState {
+pub struct LSTMHiddenState {
     input: Vec<f64>,
     memory_lane: Vec<f64>,
     main_lane: Vec<f64>,
     s1: Vec<f64>, // The output of the Sigmoid 1
     s2: Vec<f64>, // Same here but for Sigmoid 2
-    t: Vec<f64>,  // lo and behold a tanh!
+    t: Vec<f64>, // DIFFERENT!! Here, the input is saved, not the output (the vector before tanh) :o
     s3: Vec<f64>, // You'll never guess...
 }
 
@@ -251,16 +446,14 @@ impl Model {
     }
     // This is where u pull all the stuff u need to backprop
     pub fn train_forward(&self, frames: &[Vec<f64>]) -> (Vec<LSTMHiddenState>, Vec<f64>) {
-        let memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
-        let main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+        let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
         let mut hidden_states: Vec<LSTMHiddenState> = vec![];
         for frame in frames {
-            hidden_states.push(LSTM::training_forward_pass(
-                &self.lstm,
-                &memory_lane,
-                &main_lane,
-                frame,
-            ));
+            let state = LSTM::training_forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
+            memory_lane = state.memory_lane.clone();
+            main_lane = state.main_lane.clone();
+            hidden_states.push(state);
         }
         let output = ClassificationHead::forward(&self.classification_head, &main_lane);
         (hidden_states, output)
@@ -273,13 +466,13 @@ impl Model {
         actual: &[f64],
         saved_hidden_states: &[LSTMHiddenState],
     ) {
-        let classification_head_gradient = ClassificationHead::gitgud(
+        let a_t = ClassificationHead::gitgud(
             &mut self.classification_head,
             learning_rate,
             actual,
             output,
-            &saved_hidden_states[saved_hidden_states.len()].main_lane,
+            &saved_hidden_states[saved_hidden_states.len() - 1].main_lane,
         );
-        LSTM::gitgud(&classification_head_gradient, &saved_hidden_states);
+        LSTM::gitgud(&mut self.lstm, &a_t, &saved_hidden_states, &learning_rate);
     }
 }
