@@ -3,6 +3,7 @@
 // for all the framework and functions and stuff
 use rand::RngExt;
 use rand::distr::Uniform;
+use rand::rngs::ThreadRng;
 use std::f64;
 
 pub fn sigmoid(aaaaa: &[f64]) -> Vec<f64> {
@@ -59,8 +60,7 @@ pub fn softmax(vector: &[f64]) -> Vec<f64> {
     eed.iter().map(|s| s / sum).collect()
 }
 
-pub fn xavier_value(num_inputs: &i64, num_outputs: &i64) -> f64 {
-    let mut rng = rand::rng();
+pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &i64, num_outputs: &i64) -> f64 {
     let range: f64 = f64::sqrt(6. / (*num_inputs as f64 + *num_outputs as f64));
     rng.sample(Uniform::new(-range, range).unwrap())
 }
@@ -127,10 +127,11 @@ impl NN {
             weights: vec![],
             biases: vec![],
         };
+        let mut rng = rand::rng();
         for i in 0..(*num_outputs as usize) {
             x.weights.push(vec![]);
             for _ in 0..*num_inputs {
-                x.weights[i].push(xavier_value(num_inputs, num_outputs));
+                x.weights[i].push(xavier_value(&mut rng, num_inputs, num_outputs));
             }
             x.biases.push(0.)
         }
@@ -192,7 +193,7 @@ impl LSTM {
         let memory_lane = add(&multiply(&s1, memory_lane), &multiply(&s2, &tanh(&t)));
         let output = multiply(&tanh(&memory_lane), &s3);
         LSTMHiddenState {
-            input: input.to_vec(),
+            concatified,
             memory_lane: memory_lane.clone(),
             main_lane: output.clone(),
             s1,
@@ -209,10 +210,10 @@ impl LSTM {
         saved_hidden_states: &[LSTMHiddenState],
         learning_rate: &f64,
     ) {
-        let input_size = saved_hidden_states[0].input.len();
+        let concatified_size = saved_hidden_states[0].concatified.len();
         let gate_size = saved_hidden_states[0].main_lane.len();
 
-        let mut sum_s1: Vec<Vec<f64>> = vec![vec![0.; input_size]; gate_size];
+        let mut sum_s1: Vec<Vec<f64>> = vec![vec![0.; concatified_size]; gate_size];
         let mut sum_s2: Vec<Vec<f64>> = sum_s1.clone();
         let mut sum_s3: Vec<Vec<f64>> = sum_s1.clone();
         let mut sum_t: Vec<Vec<f64>> = sum_s1.clone();
@@ -239,7 +240,7 @@ impl LSTM {
                     &state.s3,
                     &tanh(&state.memory_lane)
                         .iter()
-                        .map(|s| 1. - s.powf(2.))
+                        .map(|s| 1. - s * s)
                         .collect::<Vec<f64>>(),
                 ),
             );
@@ -251,7 +252,7 @@ impl LSTM {
                 &dc_bob,
                 &(tanh(&state.t)
                     .iter()
-                    .map(|s| 1. - s.powf(2.))
+                    .map(|s| 1. - s * s)
                     .collect::<Vec<f64>>()),
             );
             let s1 = multiply(
@@ -284,10 +285,10 @@ impl LSTM {
                 ),
                 &tanh(&state.memory_lane),
             );
-            sum_s1 = madd(&outer_product(&s1, &state.input), &sum_s1);
-            sum_s2 = madd(&outer_product(&s2, &state.input), &sum_s2);
-            sum_s3 = madd(&outer_product(&s3, &state.input), &sum_s3);
-            sum_t = madd(&outer_product(&t, &state.input), &sum_t);
+            sum_s1 = madd(&outer_product(&s1, &state.concatified), &sum_s1);
+            sum_s2 = madd(&outer_product(&s2, &state.concatified), &sum_s2);
+            sum_s3 = madd(&outer_product(&s3, &state.concatified), &sum_s3);
+            sum_t = madd(&outer_product(&t, &state.concatified), &sum_t);
 
             bias_grad_s1 = add(&bias_grad_s1, &s1);
             bias_grad_s2 = add(&bias_grad_s2, &s2);
@@ -393,7 +394,7 @@ impl ClassificationHead {
 // Yet another struct because of the stupid hidden states that have to be saved
 // in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
 pub struct LSTMHiddenState {
-    input: Vec<f64>,
+    concatified: Vec<f64>,
     memory_lane: Vec<f64>,
     main_lane: Vec<f64>,
     s1: Vec<f64>, // The output of the Sigmoid 1
