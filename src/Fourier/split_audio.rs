@@ -5,11 +5,11 @@ use std::io::BufReader;
 // This function splits a given wave file of format Vec<f32> into segments
 // that are frame_size long. The overlap is calculated through frame_size-hop_size,
 // this is good to keep in mind :)
-pub fn split_audio(audio: Vec<f32>, frame_size: usize, hop_size: usize) -> Vec<Vec<f32>> {
+pub fn split_audio(audio: Vec<f64>, frame_size: usize, hop_size: usize) -> Vec<Vec<f64>> {
     let mut i: usize = 0;
-    let mut split: Vec<Vec<f32>> = vec![];
+    let mut split: Vec<Vec<f64>> = vec![];
     while i + frame_size <= audio.len() {
-        let frame: Vec<f32> = audio[i..i + frame_size].to_vec();
+        let frame: Vec<f64> = audio[i..i + frame_size].to_vec();
         split.push(frame);
         i += hop_size;
     }
@@ -18,12 +18,15 @@ pub fn split_audio(audio: Vec<f32>, frame_size: usize, hop_size: usize) -> Vec<V
 
 // This function converts an input variable wave file into a Vec<f32> with very
 // fancy matches :)
-pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f32> {
+pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f64> {
     match audio.spec().sample_format {
-        hound::SampleFormat::Float => audio.samples::<f32>().map(|s| s.unwrap()).collect(),
+        hound::SampleFormat::Float => audio
+            .samples::<f32>()
+            .map(|s| s.unwrap() as f64)
+            .collect::<Vec<f64>>(),
         hound::SampleFormat::Int => audio
             .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
+            .map(|s| s.unwrap() as f64 / i16::MAX as f64)
             .collect(),
     }
 }
@@ -32,7 +35,7 @@ pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f32> {
 // by a squared sine wave (sin^2(πk/N)=0.5 * (1 - cos(2πk/N))) so the frame doesn't
 // get cut off but instead gets scaled by a more extreme sine curve :3
 // This prevents spectral leakage
-pub fn hann(audio: &[Vec<f32>]) -> Vec<Vec<f32>> {
+pub fn hann(audio: &[Vec<f64>]) -> Vec<Vec<f64>> {
     audio
         .iter()
         .map(|s| {
@@ -40,7 +43,7 @@ pub fn hann(audio: &[Vec<f32>]) -> Vec<Vec<f32>> {
                 .enumerate()
                 .map(|(k, sample)| {
                     sample
-                        * (std::f32::consts::PI * k as f32 / (s.len() as f32 - 1.))
+                        * (std::f64::consts::PI * k as f64 / (s.len() as f64 - 1.))
                             .sin()
                             .powi(2)
                 })

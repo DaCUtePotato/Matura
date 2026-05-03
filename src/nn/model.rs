@@ -25,12 +25,12 @@ pub fn tanh(bbbbb: &[f64]) -> Vec<f64> {
     result
 }
 
-pub fn linear(input: &[f64], weights: &[Vec<f64>], biases: &[f64]) -> Vec<f64> {
+pub fn linear(input: &[f64], weights: &matrix, biases: &[f64]) -> Vec<f64> {
     let mut result: Vec<f64> = vec![];
-    for (i, value) in weights.iter().enumerate() {
+    for i in 0..weights.rows {
         let mut sum: f64 = 0.;
-        for (j, valuevalue) in value.iter().enumerate() {
-            sum += valuevalue * input[j];
+        for j in 0..weights.columns {
+            sum += weights.get(&i, &j) * input[j];
         }
         sum += biases[i];
         result.push(sum);
@@ -60,7 +60,7 @@ pub fn softmax(vector: &[f64]) -> Vec<f64> {
     eed.iter().map(|s| s / sum).collect()
 }
 
-pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &i64, num_outputs: &i64) -> f64 {
+pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &usize, num_outputs: &usize) -> f64 {
     let range: f64 = f64::sqrt(6. / (*num_inputs as f64 + *num_outputs as f64));
     rng.sample(Uniform::new(-range, range).unwrap())
 }
@@ -73,37 +73,26 @@ pub fn loss(output: &[f64], actual: &[f64]) -> f64 {
     sum
 }
 
-pub fn transmatmult(matrix: &[Vec<f64>], vector: &[f64]) -> Vec<f64> {
-    let mut result: Vec<f64> = vec![0.0; matrix[0].len()];
-    for (i, row) in matrix.iter().enumerate() {
-        for (j, &value) in row.iter().enumerate() {
-            result[j] += value * vector[i];
+pub fn update_weights(weights: &mut matrix, gradient: &matrix, learning_rate: &f64) {
+    for i in 0..weights.rows {
+        for j in 0..weights.columns {
+            weights.set(
+                &i,
+                &j,
+                weights.get(&i, &j) - clip(&gradient.get(&i, &j)) * learning_rate,
+            )
+        }
+    }
+}
+
+pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> matrix {
+    let mut result = matrix::new(&vector2.len(), &vector1.len());
+    for (i, value1) in vector1.iter().enumerate() {
+        for (j, value2) in vector2.iter().enumerate() {
+            result.set(&i, &j, value1 * value2);
         }
     }
     result
-}
-
-pub fn update_weights(weights: &mut [Vec<f64>], gradient: &[Vec<f64>], learning_rate: &f64) {
-    for i in 0..weights.len() {
-        for j in 0..weights[i].len() {
-            weights[i][j] -= clip(&gradient[i][j]) * learning_rate
-        }
-    }
-}
-
-pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> Vec<Vec<f64>> {
-    vector1
-        .iter()
-        .map(|&s| vector2.iter().map(|&g| g * s).collect())
-        .collect()
-}
-
-pub fn madd(matrix1: &[Vec<f64>], matrix2: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    matrix1
-        .iter()
-        .zip(matrix2.iter())
-        .map(|(val1, val2)| add(&val1, &val2))
-        .collect()
 }
 
 // Not yet used but may come in handy if the model starts producing NaN (since
@@ -114,7 +103,7 @@ pub fn clip(gradient: &f64) -> f64 {
 
 // extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
 pub struct NN {
-    weights: Vec<Vec<f64>>,
+    weights: matrix,
     biases: Vec<f64>,
 }
 
@@ -122,20 +111,66 @@ impl NN {
     pub fn forward(&self, input: &[f64]) -> Vec<f64> {
         linear(input, &self.weights, &self.biases)
     }
-    pub fn new(num_inputs: &i64, num_outputs: &i64) -> Self {
+    pub fn new(num_inputs: &usize, num_outputs: &usize) -> Self {
         let mut x = NN {
-            weights: vec![],
+            weights: matrix::new(num_inputs, num_outputs),
             biases: vec![],
         };
         let mut rng = rand::rng();
-        for i in 0..(*num_outputs as usize) {
-            x.weights.push(vec![]);
-            for _ in 0..*num_inputs {
-                x.weights[i].push(xavier_value(&mut rng, num_inputs, num_outputs));
+        for i in 0..x.weights.rows {
+            for j in 0..x.weights.columns {
+                x.weights
+                    .set(&i, &j, xavier_value(&mut rng, num_inputs, num_outputs));
             }
             x.biases.push(0.)
         }
         x
+    }
+}
+
+pub struct matrix {
+    rows: usize,
+    columns: usize,
+    data: Vec<f64>,
+}
+
+impl matrix {
+    pub fn new(rows: &usize, columns: &usize) -> Self {
+        matrix {
+            rows: *rows,
+            columns: *columns,
+            data: vec![0.; rows * columns],
+        }
+    }
+    pub fn get(&self, row: &usize, column: &usize) -> f64 {
+        self.data[row * self.columns + column]
+    }
+    pub fn set(&mut self, row: &usize, column: &usize, value: f64) {
+        self.data[row * self.columns + column] = value;
+    }
+    pub fn madd(&mut self, other: &matrix) {
+        self.data = self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(x1, x2)| x1 + x2)
+            .collect::<Vec<f64>>();
+    }
+    pub fn transmult(&self, vector: &[f64]) -> Vec<f64> {
+        let mut result = vec![0.; self.columns];
+        for column in 0..result.len() {
+            for row in 0..self.rows {
+                result[column] += self.get(&row, &column) * vector[row];
+            }
+        }
+        result
+    }
+    pub fn clone(&self) -> Self {
+        matrix {
+            rows: self.rows,
+            columns: self.columns,
+            data: self.data.clone(),
+        }
     }
 }
 
@@ -171,7 +206,7 @@ impl LSTM {
         );
         (output, memory_lane)
     }
-    pub fn new(num_inputs: &i64, num_memory_lane: &i64) -> Self {
+    pub fn new(num_inputs: &usize, num_memory_lane: &usize) -> Self {
         LSTM {
             s1: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             s2: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
@@ -213,10 +248,10 @@ impl LSTM {
         let concatified_size = saved_hidden_states[0].concatified.len();
         let gate_size = saved_hidden_states[0].main_lane.len();
 
-        let mut sum_s1: Vec<Vec<f64>> = vec![vec![0.; concatified_size]; gate_size];
-        let mut sum_s2: Vec<Vec<f64>> = sum_s1.clone();
-        let mut sum_s3: Vec<Vec<f64>> = sum_s1.clone();
-        let mut sum_t: Vec<Vec<f64>> = sum_s1.clone();
+        let mut sum_s1: matrix = matrix::new(&gate_size, &concatified_size);
+        let mut sum_s2: matrix = sum_s1.clone();
+        let mut sum_s3: matrix = sum_s1.clone();
+        let mut sum_t: matrix = sum_s1.clone();
 
         let mut bias_grad_s1 = vec![0.; gate_size];
         let mut bias_grad_s2 = bias_grad_s1.clone();
@@ -285,10 +320,10 @@ impl LSTM {
                 ),
                 &tanh(&state.memory_lane),
             );
-            sum_s1 = madd(&outer_product(&s1, &state.concatified), &sum_s1);
-            sum_s2 = madd(&outer_product(&s2, &state.concatified), &sum_s2);
-            sum_s3 = madd(&outer_product(&s3, &state.concatified), &sum_s3);
-            sum_t = madd(&outer_product(&t, &state.concatified), &sum_t);
+            sum_s1.madd(&outer_product(&s1, &state.concatified));
+            sum_s2.madd(&outer_product(&s2, &state.concatified));
+            sum_s3.madd(&outer_product(&s3, &state.concatified));
+            sum_t.madd(&outer_product(&t, &state.concatified));
 
             bias_grad_s1 = add(&bias_grad_s1, &s1);
             bias_grad_s2 = add(&bias_grad_s2, &s2);
@@ -302,12 +337,12 @@ impl LSTM {
 
             a_t = add(
                 &add(
-                    &transmatmult(&self.s1.weights, &s1),
-                    &transmatmult(&self.s2.weights, &s2),
+                    &self.s1.weights.transmult(&s1),
+                    &self.s2.weights.transmult(&s2),
                 ),
                 &add(
-                    &transmatmult(&self.s3.weights, &s3),
-                    &transmatmult(&self.t.weights, &t),
+                    &self.s3.weights.transmult(&s3),
+                    &self.t.weights.transmult(&t),
                 ),
             )[..state.main_lane.len()]
                 .to_vec()
@@ -358,7 +393,7 @@ impl ClassificationHead {
     pub fn forward(&self, input: &[f64]) -> Vec<f64> {
         softmax(&self.n.forward(input))
     }
-    pub fn new(num_memory_lane: &i64, num_classes: &i64) -> Self {
+    pub fn new(num_memory_lane: &usize, num_classes: &usize) -> Self {
         ClassificationHead {
             n: NN::new(num_memory_lane, num_classes),
         }
@@ -374,16 +409,20 @@ impl ClassificationHead {
         let mut new_loss: Vec<f64> = vec![];
         for i in 0..input.len() {
             let mut sum = 0.;
-            for j in 0..self.n.weights.len() {
-                sum += (output[j] - actual[j]) * self.n.weights[j][i];
+            for j in 0..self.n.weights.rows {
+                sum += (output[j] - actual[j]) * self.n.weights.get(&j, &i);
             }
             new_loss.push(sum);
         }
-        for i in 0..self.n.weights.len() {
-            for j in 0..self.n.weights[i].len() {
+        for i in 0..self.n.weights.rows {
+            for j in 0..self.n.weights.columns {
                 // Review and understand exactly what the hell is going on with this goofy aah
                 // gradient
-                self.n.weights[i][j] -= learning_rate * (output[i] - actual[i]) * input[j];
+                self.n.weights.set(
+                    &i,
+                    &j,
+                    self.n.weights.get(&i, &j) - learning_rate * (output[i] - actual[i]) * input[j],
+                );
             }
             self.n.biases[i] -= learning_rate * (output[i] - actual[i]);
         }
@@ -410,7 +449,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn new(frame_size: &i64, num_memory_lane: &i64, num_classes: &i64) -> Self {
+    pub fn new(frame_size: &usize, num_memory_lane: &usize, num_classes: &usize) -> Self {
         Model {
             num_memory_lane: *num_memory_lane as usize,
             classification_head: ClassificationHead::new(num_memory_lane, num_classes),
@@ -462,5 +501,6 @@ impl Model {
             saved_hidden_states,
             learning_rate,
         );
+        println!("Loss {:?}", loss(output, actual))
     }
 }
