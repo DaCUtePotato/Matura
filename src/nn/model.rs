@@ -27,12 +27,12 @@ pub fn tanh(bbbbb: &[f64]) -> Vec<f64> {
 
 pub fn linear(input: &[f64], weights: &matrix, biases: &[f64]) -> Vec<f64> {
     let mut result: Vec<f64> = vec![];
-    for i in 0..weights.rows {
+    for row in 0..weights.rows {
         let mut sum: f64 = 0.;
-        for j in 0..weights.columns {
-            sum += weights.get(&i, &j) * input[j];
+        for column in 0..weights.columns {
+            sum += weights.get(&row, &column) * input[column];
         }
-        sum += biases[i];
+        sum += biases[row];
         result.push(sum);
     }
     result
@@ -113,7 +113,7 @@ impl NN {
     }
     pub fn new(num_inputs: &usize, num_outputs: &usize) -> Self {
         let mut x = NN {
-            weights: matrix::new(num_inputs, num_outputs),
+            weights: matrix::new(num_outputs, num_inputs),
             biases: vec![],
         };
         let mut rng = rand::rng();
@@ -391,6 +391,11 @@ pub struct ClassificationHead {
 
 impl ClassificationHead {
     pub fn forward(&self, input: &[f64]) -> Vec<f64> {
+        // println!("Rows: {:?}", &self.n.weights.rows);
+        // println!("Columns: {:?}", &self.n.weights.columns);
+        // println!("input size: {:?}", input.len());
+        // println!("output size: {:?}", self.n.forward(input).len());
+
         softmax(&self.n.forward(input))
     }
     pub fn new(num_memory_lane: &usize, num_classes: &usize) -> Self {
@@ -406,11 +411,18 @@ impl ClassificationHead {
         output: &[f64],
         input: &[f64],
     ) -> Vec<f64> {
+        // println!("Rows: {:?}", self.n.weights.rows);
+        // println!("Columns: {:?}", self.n.weights.columns);
+        // println!("Input len: {:?}", input.len());
+        // println!("Output len: {:?}", output.len());
+
         let mut new_loss: Vec<f64> = vec![];
-        for i in 0..input.len() {
+
+        let classes = output.len(); // or actual.len()
+        for j in 0..input.len() {
             let mut sum = 0.;
-            for j in 0..self.n.weights.rows {
-                sum += (output[j] - actual[j]) * self.n.weights.get(&j, &i);
+            for i in 0..classes {
+                sum += (output[i] - actual[i]) * self.n.weights.get(&i, &j);
             }
             new_loss.push(sum);
         }
@@ -451,7 +463,7 @@ pub struct Model {
 impl Model {
     pub fn new(frame_size: &usize, num_memory_lane: &usize, num_classes: &usize) -> Self {
         Model {
-            num_memory_lane: *num_memory_lane as usize,
+            num_memory_lane: *num_memory_lane,
             classification_head: ClassificationHead::new(num_memory_lane, num_classes),
             lstm: LSTM::new(frame_size, num_memory_lane),
         }
