@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 // This file contains all the prerequisites and the model. It alone doesn't do anything
 // and the model has to be created in main.rs and run/trained there too. This is just
 // for all the framework and functions and stuff
@@ -102,6 +103,7 @@ pub fn clip(gradient: &f64) -> f64 {
 }
 
 // extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
+#[derive(Serialize, Deserialize)]
 pub struct NN {
     weights: matrix,
     biases: Vec<f64>,
@@ -128,6 +130,7 @@ impl NN {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct matrix {
     rows: usize,
     columns: usize,
@@ -174,6 +177,7 @@ impl matrix {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct LSTM {
     // Forget gate
     s1: NN,
@@ -385,6 +389,7 @@ impl LSTM {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ClassificationHead {
     n: NN,
 }
@@ -454,6 +459,7 @@ pub struct LSTMHiddenState {
     s3: Vec<f64>, // You'll never guess...
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Model {
     num_memory_lane: usize,
     classification_head: ClassificationHead,

@@ -1,5 +1,7 @@
 use crate::fourier::{fft::*, split_audio::*};
 use crate::nn::model::*;
+use std::fs::File;
+use std::io::prelude::*;
 
 mod fourier;
 mod nn;
@@ -28,4 +30,12 @@ fn main() {
         let (hidden_states, output) = model.train_forward(&fouriered);
         model.gitgud(&learning_rate, &output, &actual, &hidden_states);
     }
+    let json = serde_json::to_string(&model)
+        .expect("Idk uhm error ehehe making the model a json failed aifink :) Have funnn :D");
+
+    // Save weights
+    let mut file = File::create("Timmy.json").unwrap();
+    file.write_all(json.as_bytes())
+        .expect("Oh whoopsies, writing no worky work");
+    println!("Model saved successfully...")
 }
