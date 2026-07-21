@@ -1,6 +1,6 @@
 use hound::WavReader;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufReader;
 
 // This function splits a given wave file of format Vec<f32> into segments
@@ -65,6 +65,18 @@ pub fn hann(audio: &[Vec<f64>]) -> Vec<Vec<f64>> {
 
 #[derive(Serialize, Deserialize)]
 pub struct Data {
-    fourier: Vec<Vec<f32>>,
-    class: Vec<f32>,
+    pub fourier: Vec<Vec<f64>>,
+    pub class: Vec<f64>,
+}
+
+pub fn read_wavs(dir: &str) -> Vec<WavReader<BufReader<File>>> {
+    let mut results = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().unwrap() == "wav" {
+            results.push(hound::WavReader::open(path).unwrap())
+        }
+    }
+    results
 }
