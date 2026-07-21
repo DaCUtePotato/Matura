@@ -1,4 +1,5 @@
 use hound::WavReader;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::BufReader;
 
@@ -61,3 +62,9 @@ pub fn hann(audio: &[Vec<f64>]) -> Vec<Vec<f64>> {
 //     let frames = split_audio(unhound(&mut audio), frame_size, hop_size);
 //     println!("{:?}", frames)
 // }
+
+#[derive(Serialize, Deserialize)]
+pub struct Data {
+    fourier: Vec<Vec<f32>>,
+    class: Vec<f32>,
+}
