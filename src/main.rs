@@ -1,10 +1,13 @@
+use num::ToPrimitive;
+
 use crate::fourier::{fft::*, split_audio::*};
 use crate::nn::model::*;
+use rand::rng;
+use rand::seq::SliceRandom;
 use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
 
 mod fourier;
 mod nn;
@@ -28,23 +31,34 @@ fn main() {
         let frame_size: usize = 2048;
         let hop_size: usize = frame_size / 4; // For 75% overlap
         let label: Vec<f64> = vec![0., 1., 0.];
+
+        // Will take all .wav files in this directory
         let path = "./2";
 
-        // Read WAV file and apply framing
+        // File name of the raw fourier data
+        let data_file_name = "class2.json";
+
+        // Read WAV files
         let audios = read_wavs(path);
 
         let mut data_collection: Vec<Data> = vec![];
         for mut audio in audios {
+            // Ownership things
             let class = label.clone();
 
+            // Split audio
             let frames = split_audio(unhound(&mut audio), frame_size, hop_size);
+
             // Apply Hann windowing algorithm on the windows
             let hanned = hann(&frames);
+
             // Apply Fourier transform on the "Hanned" windows
             let mut fourier: Vec<Vec<f64>> = vec![];
             for frame in hanned {
                 fourier.push(normVecComplex(&ft(frame)));
             }
+
+            // Add the transformed audio to the collection
             data_collection.push(Data { fourier, class });
         }
         // Save labelled data
@@ -52,7 +66,7 @@ fn main() {
             .expect("Oh magaaaaud failed to convert ur goofy struct to string D:");
 
         // Save weights
-        let mut file = File::create("class2.json").unwrap();
+        let mut file = File::create(data_file_name).unwrap();
         file.write_all(json.as_bytes())
             .expect("Oh whoopsies, writing no worky work");
         println!("Data saved successfully...")
@@ -61,31 +75,37 @@ fn main() {
         // Define model parameters
         let memory_lane_size = 128;
         let num_classes = 3;
-        let learning_rate: f64 = 1e-3;
-
-        // This should be equivalent to the fourier frame size
+        // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
 
-        // Read data
-        let content1 = fs::read_to_string("class1.json").expect("Reading data didn't work");
-        let data_collection1: Vec<Data> =
-            serde_json::from_str(&content1).expect("Ran into a problem trying to deserialize data");
+        // Define training parameters
+        let learning_rate: f64 = 1e-3;
+        let trials: usize = 128;
 
-        let content2 = fs::read_to_string("class2.json").expect("Reading data didn't work");
-        let data_collection2: Vec<Data> =
-            serde_json::from_str(&content2).expect("Ran into a problem trying to deserialize data");
-        let mut data_collection = data_collection1;
-        data_collection.extend(data_collection2);
+        // Read data
+        let mut data_collection: Vec<Data> = vec![];
+        let data = ["class1.json", "class2.json"];
+        for content in data {
+            let stuff = fs::read_to_string(content).expect("Failed to read data");
+            let data_collection_temp: Vec<Data> =
+                serde_json::from_str(&stuff).expect("Failed to deserialize content");
+            data_collection.extend(data_collection_temp);
+        }
         let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
+        let mut progress: usize = 0;
         // Train the model
-        // This part has to be made better, I think it should just pick a data from data_collection
-        for _ in 0..100 {
-            for data in &data_collection {
-                let (data, class) = (&data.fourier, &data.class);
-                let (hidden_states, output) = model.train_forward(data);
-                model.gitgud(&learning_rate, &output, class, &hidden_states);
-            }
+        let mut rng = rng();
+        data_collection.shuffle(&mut rng);
+        for data in data_collection.iter().cycle().take(trials) {
+            let (data, class) = (&data.fourier, &data.class);
+            let (hidden_states, output) = model.train_forward(data);
+            model.gitgud(&learning_rate, &output, class, &hidden_states);
+            progress += 1;
+            println!(
+                "Poggers: {:?}%",
+                (100. * (progress as f32) / (trials as f32))
+            );
         }
         // Save weights
         let json = serde_json::to_string(&model)
@@ -100,9 +120,10 @@ fn main() {
         // Define frames
         let frame_size: usize = 2048;
         let hop_size: usize = frame_size / 4; // For 75% overlap
+        let audio_dir = "./1/audio.wav";
 
         // Read WAV file and apply framing
-        let mut audio = hound::WavReader::open("./1/audio.wav").unwrap();
+        let mut audio = hound::WavReader::open(audio_dir).unwrap();
         let frames = split_audio(unhound(&mut audio), frame_size, hop_size);
         // Apply Hann windowing algorithm on the windows
         let hanned = hann(&frames);
