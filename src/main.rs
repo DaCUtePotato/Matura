@@ -1,5 +1,3 @@
-use num::ToPrimitive;
-
 use crate::fourier::{fft::*, split_audio::*};
 use crate::nn::model::*;
 use rand::rng;
@@ -30,13 +28,13 @@ fn main() {
         // Definitions
         let frame_size: usize = 2048;
         let hop_size: usize = frame_size / 4; // For 75% overlap
-        let label: Vec<f64> = vec![0., 1., 0.];
+        let label: Vec<f64> = vec![1., 0.];
 
         // Will take all .wav files in this directory
-        let path = "./2";
+        let path = "./training_audio/sine";
 
         // File name of the raw fourier data
-        let data_file_name = "class2.json";
+        let data_file_name = "class1.json";
 
         // Read WAV files
         let audios = read_wavs(path);
@@ -73,14 +71,14 @@ fn main() {
     }
     if train {
         // Define model parameters
-        let memory_lane_size = 128;
-        let num_classes = 3;
+        let memory_lane_size = 512;
+        let num_classes = 2;
         // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
 
         // Define training parameters
         let learning_rate: f64 = 1e-3;
-        let trials: usize = 128;
+        let epochs = 15;
 
         // Read data
         let mut data_collection: Vec<Data> = vec![];
@@ -96,16 +94,22 @@ fn main() {
         let mut progress: usize = 0;
         // Train the model
         let mut rng = rng();
-        data_collection.shuffle(&mut rng);
-        for data in data_collection.iter().cycle().take(trials) {
-            let (data, class) = (&data.fourier, &data.class);
-            let (hidden_states, output) = model.train_forward(data);
-            model.gitgud(&learning_rate, &output, class, &hidden_states);
-            progress += 1;
-            println!(
-                "Poggers: {:?}%",
-                (100. * (progress as f32) / (trials as f32))
-            );
+        for epoch in 0..epochs {
+            data_collection.shuffle(&mut rng); // shuffle each epoch
+            for data in &data_collection {
+                println!("-----------------------------------------");
+                println!("On epoch {} out of {}", epoch + 1, epochs);
+                let (fourier, class) = (&data.fourier, &data.class);
+                let (hidden_states, output) = model.train_forward(fourier);
+                model.gitgud(&learning_rate, &output, class, &hidden_states);
+                println!(
+                    "Progress: {}%",
+                    100. * (progress as f64) / (data_collection.len() as f64 * epochs as f64)
+                );
+                progress += 1;
+            }
+            println!("Epoch {}/{} done!", epoch + 1, epochs);
+            println!("-----------------------------------------");
         }
         // Save weights
         let json = serde_json::to_string(&model)
@@ -120,7 +124,7 @@ fn main() {
         // Define frames
         let frame_size: usize = 2048;
         let hop_size: usize = frame_size / 4; // For 75% overlap
-        let audio_dir = "./1/audio.wav";
+        let audio_dir = "audio.wav";
 
         // Read WAV file and apply framing
         let mut audio = hound::WavReader::open(audio_dir).unwrap();
