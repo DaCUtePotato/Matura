@@ -99,8 +99,6 @@ pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> Matrix {
     result
 }
 
-// Not yet used but may come in handy if the model starts producing NaN (since
-// gradients can explode)
 pub fn clip(gradient: &f64) -> f64 {
     gradient.clamp(-1., 1.)
 }
