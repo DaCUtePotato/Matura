@@ -80,7 +80,11 @@ fn main() {
         let learning_rate: f64 = 1e-3;
         let epochs = 15;
 
-        // Read data
+        // Define splits
+        let training_split = 0.8;
+        let validation_split = 1. - training_split;
+
+        // Read data from files
         let mut data_collection: Vec<Data> = vec![];
         let data = ["class1.json", "class2.json"];
         for content in data {
@@ -89,14 +93,21 @@ fn main() {
                 serde_json::from_str(&stuff).expect("Failed to deserialize content");
             data_collection.extend(data_collection_temp);
         }
+
+        // Split data into training and validation sets
+        let mut rng = rng();
+        data_collection.shuffle(&mut rng);
+        let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
+        let training_set = data_collection.split_off(split_index);
+        let validation_set = data_collection;
+
+        // Create model
         let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
+        // Train the model on training set
         let mut progress: usize = 0;
-        // Train the model
-        let mut rng = rng();
         for epoch in 0..epochs {
-            data_collection.shuffle(&mut rng); // shuffle each epoch
-            for data in &data_collection {
+            for data in &training_set {
                 println!("-----------------------------------------");
                 println!("On epoch {} out of {}", epoch + 1, epochs);
                 let (fourier, class) = (&data.fourier, &data.class);
@@ -104,13 +115,14 @@ fn main() {
                 model.gitgud(&learning_rate, &output, class, &hidden_states);
                 println!(
                     "Progress: {}%",
-                    100. * (progress as f64) / (data_collection.len() as f64 * epochs as f64)
+                    100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
                 );
                 progress += 1;
             }
             println!("Epoch {}/{} done!", epoch + 1, epochs);
             println!("-----------------------------------------");
         }
+
         // Save weights
         let json = serde_json::to_string(&model)
             .expect("Idk uhm error ehehe making the model a json failed aifink :) Have funnn :D");
