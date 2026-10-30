@@ -6,6 +6,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
+// use std::random::random;
 
 mod fourier;
 mod nn;
@@ -73,13 +74,13 @@ fn main() {
     }
     if train {
         // Define model parameters
-        let memory_lane_size = 512;
+        let memory_lane_size = 256;
         let num_classes = 2;
         // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
 
         // Define training parameters
-        let learning_rate: f64 = 1e-3;
+        let learning_rate: f64 = 1e-2;
         let epochs = 15;
 
         // Define splits
@@ -125,6 +126,20 @@ fn main() {
             println!("-----------------------------------------");
         }
 
+        // Calculate validation loss after training
+        let mut validation_losses: Vec<f64> = vec![];
+
+        for data in &validation_set {
+            let fourier = &data.fourier;
+            let output: Vec<f64> = model.forward(fourier);
+            validation_losses.push(loss(&output, &data.class));
+        }
+
+        let validation_loss =
+            validation_losses.iter().sum::<f64>() / (validation_losses.len() as f64);
+
+        println!("Validation loss: {}", validation_loss);
+
         // Save weights
         let json = serde_json::to_string(&model)
             .expect("Idk uhm error ehehe making the model a json failed aifink :) Have funnn :D");
@@ -145,14 +160,16 @@ fn main() {
         let epochs = 15;
 
         // Define ranges
-        let learning_rates = vec![1e-2, 1e-3, 5e-3, 1e-4, 5e-4, 1e-5, 5e-5];
-        let memory_lane_sizes = vec![64, 128, 256, 512];
+        let init_learning_rate_exponent_range: Vec<f64> = vec![2., 3.];
+        let final_learning_rate_exponent_range: Vec<f64> = vec![4., 6.];
+        let memory_lane_sizes: Vec<usize> = vec![64, 128, 256, 512, 1024];
 
         // Hyper parameters
-        let trials = learning_rates.len() * memory_lane_sizes.len() + 10; //Number of full training runs
+        let trials = memory_lane_sizes.len() * 20; //Number of full training runs
         let mut best_lr: f64 = 1e-3;
         let mut best_mem_lane = 512;
-        let mut best_val_loss = 2.;
+        let mut best_val_loss = f64::INFINITY; //MUAHMUAH INFINITE LOSS
+        let mut best_final_lr = 0.;
 
         // Define splits
         let training_split = 0.8;
@@ -177,17 +194,32 @@ fn main() {
 
         for i in 0..trials {
             // Randomize hyperparameters
-            let learning_rate = learning_rates[rng.random_range(0..learning_rates.len())];
+            let init_lr_exponent: f64 = -rng.random_range(
+                init_learning_rate_exponent_range[0]..init_learning_rate_exponent_range[1],
+            ) as f64;
+            let init_learning_rate: f64 = f64::powf(10., init_lr_exponent);
+
+            let final_lr_exponent: f64 = -rng.random_range(
+                final_learning_rate_exponent_range[0]..final_learning_rate_exponent_range[1],
+            ) as f64;
+            let final_learning_rate: f64 = f64::powf(10., final_lr_exponent);
+
             let memory_lane_size = memory_lane_sizes[rng.random_range(0..memory_lane_sizes.len())];
             // Create model
             let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
             // Train the model on training set
             for epoch in 0..epochs {
+                // Linearly decreasing lr with epoch progression
+                let current_lr = init_learning_rate
+                    - (init_learning_rate - final_learning_rate) * (epoch as f64) / (epochs as f64);
+
+                println!("Current learning rate is: {}", current_lr);
+
                 for data in &training_set {
                     let (fourier, class) = (&data.fourier, &data.class);
                     let (hidden_states, output) = model.train_forward(fourier);
-                    model.gitgud(&learning_rate, &output, class, &hidden_states);
+                    model.gitgud(&current_lr, &output, class, &hidden_states);
                 }
                 println!("Epoch {}/{} done!", epoch + 1, epochs);
                 println!(".........................................");
@@ -206,16 +238,21 @@ fn main() {
 
             if validation_loss < best_val_loss {
                 best_val_loss = validation_loss;
-                best_lr = learning_rate;
+                best_lr = init_learning_rate;
+                best_final_lr = final_learning_rate;
                 best_mem_lane = memory_lane_size;
             };
             // Print some information
             println!("-----------------------------------------");
             println!("Progress: {}%", 100. * (i as f64) / (trials as f64));
             println!("Validation Loss: {}", validation_loss);
-            println!("Best params: {}, {}", best_lr, best_mem_lane);
+            println!(
+                "Best initial lr: {}, best final lr: {}, best memory lane size: {}",
+                best_lr, best_final_lr, best_mem_lane
+            );
             println!("-----------------------------------------");
         }
+        println!("Best validation loss: {}", best_val_loss);
     }
     if run {
         // Define frames
