@@ -76,12 +76,14 @@ fn main() {
         // Define model parameters
         let memory_lane_size = 256;
         let num_classes = 2;
+
         // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
 
         // Define training parameters
         let learning_rate: f64 = 1e-2;
         let epochs = 15;
+        let final_learning_rate: f64 = 1e-6;
 
         // Define splits
         let training_split = 0.8;
@@ -110,12 +112,14 @@ fn main() {
         // Train the model on training set
         let mut progress: usize = 0;
         for epoch in 0..epochs {
+            let current_lr = learning_rate
+                - (learning_rate - final_learning_rate) * epoch as f64 / epochs as f64;
             for data in &training_set {
                 println!("-----------------------------------------");
                 println!("On epoch {} out of {}", epoch + 1, epochs);
                 let (fourier, class) = (&data.fourier, &data.class);
                 let (hidden_states, output) = model.train_forward(fourier);
-                model.gitgud(&learning_rate, &output, class, &hidden_states);
+                model.gitgud(&current_lr, &output, class, &hidden_states);
                 println!(
                     "Progress: {}%",
                     100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
