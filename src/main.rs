@@ -76,6 +76,7 @@ fn main() {
         // Define model parameters
         let memory_lane_size = 256;
         let num_classes = 2;
+        let batch_size = 0;
 
         // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
@@ -109,25 +110,29 @@ fn main() {
         // Create model
         let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
-        // Train the model on training set
-        let mut progress: usize = 0;
-        for epoch in 0..epochs {
-            let current_lr = learning_rate
-                - (learning_rate - final_learning_rate) * epoch as f64 / epochs as f64;
-            for data in &training_set {
+        if batch_size == 0 {
+            // Train the model on training set
+            let mut progress: usize = 0;
+            for epoch in 0..epochs {
+                let current_lr = learning_rate
+                    - (learning_rate - final_learning_rate) * (epoch + 1) as f64 / epochs as f64;
+                for data in &training_set {
+                    println!("-----------------------------------------");
+                    println!("On epoch {} out of {}", epoch + 1, epochs);
+                    let (fourier, class) = (&data.fourier, &data.class);
+                    let (hidden_states, output) = model.train_forward(fourier);
+                    model.gitgud(&current_lr, &output, class, &hidden_states);
+                    println!(
+                        "Progress: {}%",
+                        100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
+                    );
+                    progress += 1;
+                }
+                println!("Epoch {}/{} done!", epoch + 1, epochs);
                 println!("-----------------------------------------");
-                println!("On epoch {} out of {}", epoch + 1, epochs);
-                let (fourier, class) = (&data.fourier, &data.class);
-                let (hidden_states, output) = model.train_forward(fourier);
-                model.gitgud(&current_lr, &output, class, &hidden_states);
-                println!(
-                    "Progress: {}%",
-                    100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
-                );
-                progress += 1;
             }
-            println!("Epoch {}/{} done!", epoch + 1, epochs);
-            println!("-----------------------------------------");
+        } else {
+            // TODO: Implement multithreaded training runs in batches
         }
 
         // Calculate validation loss after training
@@ -216,7 +221,8 @@ fn main() {
             for epoch in 0..epochs {
                 // Linearly decreasing lr with epoch progression
                 let current_lr = init_learning_rate
-                    - (init_learning_rate - final_learning_rate) * (epoch as f64) / (epochs as f64);
+                    - (init_learning_rate - final_learning_rate) * (epoch + 1) as f64
+                        / epochs as f64;
 
                 println!("Current learning rate is: {}", current_lr);
 

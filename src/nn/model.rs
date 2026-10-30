@@ -89,6 +89,23 @@ pub fn update_weights(weights: &mut Matrix, gradient: &Matrix, learning_rate: &f
     }
 }
 
+pub fn update_weights_batched(
+    weights: &mut Matrix,
+    gradient: &Matrix,
+    learning_rate: &f64,
+    batch_size: &f64,
+) {
+    for i in 0..weights.rows {
+        for j in 0..weights.columns {
+            weights.set(
+                &i,
+                &j,
+                weights.get(&i, &j) - clip(&gradient.get(&i, &j)) * learning_rate / batch_size,
+            )
+        }
+    }
+}
+
 pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> Matrix {
     let mut result = Matrix::new(&vector2.len(), &vector1.len());
     for (i, value1) in vector1.iter().enumerate() {
@@ -391,6 +408,178 @@ impl LSTM {
                 .collect::<Vec<f64>>(),
         );
     }
+    pub fn calculate_changes_sum(
+        &mut self,
+        a_t: &[f64],
+        saved_hidden_states: &[LSTMHiddenState],
+    ) -> sum_changes {
+        let concatified_size = saved_hidden_states[0].concatified.len();
+        let gate_size = saved_hidden_states[0].main_lane.len();
+
+        let mut sum_s1: Matrix = Matrix::new(&gate_size, &concatified_size);
+        let mut sum_s2: Matrix = sum_s1.clone();
+        let mut sum_s3: Matrix = sum_s1.clone();
+        let mut sum_t: Matrix = sum_s1.clone();
+
+        let mut bias_grad_s1 = vec![0.; gate_size];
+        let mut bias_grad_s2 = bias_grad_s1.clone();
+        let mut bias_grad_s3 = bias_grad_s1.clone();
+        let mut bias_grad_t = bias_grad_s1.clone();
+
+        let mut dc_next = vec![0.; gate_size];
+        let mut a_t = a_t.to_vec();
+        for (i, state) in saved_hidden_states.iter().rev().enumerate() {
+            let c_prev = if i + 1 < saved_hidden_states.len() {
+                saved_hidden_states[saved_hidden_states.len() - i - 2]
+                    .memory_lane
+                    .clone()
+            } else {
+                vec![0.; state.memory_lane.len()]
+            };
+            let c_now = multiply(
+                &a_t,
+                &multiply(
+                    &state.s3,
+                    &tanh(&state.memory_lane)
+                        .iter()
+                        .map(|s| 1. - s * s)
+                        .collect::<Vec<f64>>(),
+                ),
+            );
+            let c = add(&dc_next, &c_now);
+
+            let dc_bob: Vec<f64> = multiply(&c, &state.s2);
+            let c_bob: Vec<f64> = tanh(&state.t);
+            let t: Vec<f64> = multiply(
+                &dc_bob,
+                &(tanh(&state.t)
+                    .iter()
+                    .map(|s| 1. - s * s)
+                    .collect::<Vec<f64>>()),
+            );
+            let s1 = multiply(
+                &c,
+                &multiply(
+                    &c_prev,
+                    &multiply(
+                        &state.s1,
+                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+            );
+            let s2 = multiply(
+                &c,
+                &multiply(
+                    &c_bob,
+                    &multiply(
+                        &state.s2,
+                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+            );
+            let s3 = multiply(
+                &multiply(
+                    &a_t,
+                    &multiply(
+                        &state.s3,
+                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                    ),
+                ),
+                &tanh(&state.memory_lane),
+            );
+            sum_s1.madd(&outer_product(&s1, &state.concatified));
+            sum_s2.madd(&outer_product(&s2, &state.concatified));
+            sum_s3.madd(&outer_product(&s3, &state.concatified));
+            sum_t.madd(&outer_product(&t, &state.concatified));
+
+            bias_grad_s1 = add(&bias_grad_s1, &s1);
+            bias_grad_s2 = add(&bias_grad_s2, &s2);
+            bias_grad_s3 = add(&bias_grad_s3, &s3);
+            bias_grad_t = add(&bias_grad_t, &t);
+
+            dc_next = multiply(&c, &state.s1)
+                .iter()
+                .map(|s| s.clamp(-0.5, 0.5))
+                .collect();
+
+            a_t = add(
+                &add(
+                    &self.s1.weights.transmult(&s1),
+                    &self.s2.weights.transmult(&s2),
+                ),
+                &add(
+                    &self.s3.weights.transmult(&s3),
+                    &self.t.weights.transmult(&t),
+                ),
+            )[..state.main_lane.len()]
+                .to_vec()
+                .iter()
+                .map(|s| s.clamp(-0.5, 0.5))
+                .collect();
+        }
+        sum_changes {
+            sum_s1,
+            sum_s2,
+            sum_t,
+            sum_s3,
+            bias_grad_s1,
+            bias_grad_s2,
+            bias_grad_t,
+            bias_grad_s3,
+        }
+    }
+    fn change_weights_batched(
+        &mut self,
+        sum_changes: sum_changes,
+        learning_rate: &f64,
+        batch_size: &i64,
+    ) {
+        let batch_size = *batch_size as f64;
+
+        let sum_s1 = sum_changes.sum_s1;
+        let sum_s2 = sum_changes.sum_s2;
+        let sum_s3 = sum_changes.sum_s3;
+        let sum_t = sum_changes.sum_t;
+
+        update_weights_batched(&mut self.s1.weights, &sum_s1, learning_rate, &batch_size);
+        update_weights_batched(&mut self.s2.weights, &sum_s2, learning_rate, &batch_size);
+        update_weights_batched(&mut self.s3.weights, &sum_s3, learning_rate, &batch_size);
+        update_weights_batched(&mut self.t.weights, &sum_t, learning_rate, &batch_size);
+
+        let bias_grad_s1 = sum_changes.bias_grad_s1;
+        let bias_grad_s2 = sum_changes.bias_grad_s2;
+        let bias_grad_s3 = sum_changes.bias_grad_s3;
+        let bias_grad_t = sum_changes.bias_grad_t;
+
+        self.s1.biases = add(
+            &self.s1.biases,
+            &bias_grad_s1
+                .iter()
+                .map(|s| -clip(s) * learning_rate / batch_size)
+                .collect::<Vec<f64>>(),
+        );
+        self.s2.biases = add(
+            &self.s2.biases,
+            &bias_grad_s2
+                .iter()
+                .map(|s| -clip(s) * learning_rate / batch_size)
+                .collect::<Vec<f64>>(),
+        );
+        self.s3.biases = add(
+            &self.s3.biases,
+            &bias_grad_s3
+                .iter()
+                .map(|s| -clip(s) * learning_rate / batch_size)
+                .collect::<Vec<f64>>(),
+        );
+        self.t.biases = add(
+            &self.t.biases,
+            &bias_grad_t
+                .iter()
+                .map(|s| -clip(s) * learning_rate / batch_size)
+                .collect::<Vec<f64>>(),
+        );
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -448,6 +637,74 @@ impl ClassificationHead {
             self.n.biases[i] -= learning_rate * (output[i] - actual[i]);
         }
         new_loss
+    }
+    fn calculate_change(
+        &self,
+        actual: &[f64],
+        output: &[f64],
+        input: &[f64],
+        learning_rate: &f64,
+        batch_size: &i64,
+    ) -> (Vec<f64>, Matrix, Vec<f64>) {
+        let mut new_loss: Vec<f64> = vec![];
+
+        let classes = output.len();
+
+        let batch_size = *batch_size as f64;
+
+        for j in 0..input.len() {
+            let mut sum = 0.;
+            for i in 0..classes {
+                sum += (output[i] - actual[i]) * self.n.weights.get(&i, &j);
+            }
+            new_loss.push(sum);
+        }
+        let mut change_weights: Matrix = Matrix::new(&self.n.weights.rows, &self.n.weights.columns);
+        let mut change_bias: Vec<f64> = vec![];
+
+        for i in 0..self.n.weights.rows {
+            for (k, val) in input.iter().enumerate() {
+                // Review and understand exactly what the hell is going on with this goofy aah
+                // gradient
+                change_weights.set(
+                    &i,
+                    &k,
+                    -learning_rate * (output[i] - actual[i]) * val / batch_size,
+                );
+            }
+            change_bias.push(-learning_rate * (output[i] - actual[i]) / batch_size);
+        }
+
+        (change_bias, change_weights, new_loss)
+    }
+    fn apply_changes(&mut self, change_bias: Vec<f64>, change_weights: Matrix) {
+        self.n.weights.madd(&change_weights);
+        self.n.biases = add(&self.n.biases, &change_bias);
+    }
+}
+
+pub struct sum_changes {
+    sum_s1: Matrix,
+    sum_s2: Matrix,
+    sum_t: Matrix,
+    sum_s3: Matrix,
+    bias_grad_s1: Vec<f64>,
+    bias_grad_s2: Vec<f64>,
+    bias_grad_t: Vec<f64>,
+    bias_grad_s3: Vec<f64>,
+}
+
+impl sum_changes {
+    fn add(&mut self, x: &sum_changes) {
+        self.sum_s1.madd(&x.sum_s1);
+        self.sum_s2.madd(&x.sum_s2);
+        self.sum_s3.madd(&x.sum_s3);
+        self.sum_t.madd(&x.sum_t);
+
+        self.bias_grad_s1 = add(&self.bias_grad_s1, &x.bias_grad_s1);
+        self.bias_grad_s2 = add(&self.bias_grad_s2, &x.bias_grad_s2);
+        self.bias_grad_s3 = add(&self.bias_grad_s3, &x.bias_grad_s3);
+        self.bias_grad_t = add(&self.bias_grad_t, &x.bias_grad_t);
     }
 }
 
@@ -524,5 +781,78 @@ impl Model {
             learning_rate,
         );
         println!("Loss: {:?}", loss(output, actual))
+    }
+
+    pub fn gitgud_batched(
+        &mut self,
+        learning_rate: &f64,
+        output: &[Vec<f64>],
+        actual: &[Vec<f64>],
+        all_saved_hidden_states: &[Vec<LSTMHiddenState>],
+    ) {
+        let mut lstm_total_changes: Vec<sum_changes> = vec![];
+        let mut ch_weights_changes: Vec<Matrix> = vec![];
+        let mut ch_bias_changes: Vec<Vec<f64>> = vec![];
+        let mut total_loss = 0.;
+
+        let batch_size = all_saved_hidden_states.len();
+
+        for i in 0..batch_size {
+            let sample = &all_saved_hidden_states[i];
+            let sample_actual = &actual[i];
+            let sample_output = &output[i];
+            let (change_bias, change_weights, first_loss) = ClassificationHead::calculate_change(
+                &self.classification_head,
+                sample_actual,
+                sample_output,
+                &sample[sample.len() - 1].main_lane,
+                learning_rate,
+                &(batch_size as i64),
+            );
+            ch_weights_changes.push(change_weights);
+            ch_bias_changes.push(change_bias);
+
+            lstm_total_changes.push(LSTM::calculate_changes_sum(
+                &mut self.lstm,
+                &first_loss,
+                sample,
+            ));
+
+            total_loss += loss(sample_output, sample_actual);
+        }
+        let ch_weights_change = ch_weights_changes
+            .into_iter()
+            .reduce(|mut acc, change| {
+                acc.madd(&change);
+                acc
+            })
+            .unwrap();
+        let ch_bias_change = ch_bias_changes
+            .into_iter()
+            .reduce(|mut acc, change| {
+                acc = add(&acc, &change);
+                acc
+            })
+            .unwrap();
+        ClassificationHead::apply_changes(
+            &mut self.classification_head,
+            ch_bias_change,
+            ch_weights_change,
+        );
+
+        let lstm_sum_changes = lstm_total_changes
+            .into_iter()
+            .reduce(|mut acc, change| {
+                acc.add(&change);
+                acc
+            })
+            .unwrap();
+        LSTM::change_weights_batched(
+            &mut self.lstm,
+            lstm_sum_changes,
+            learning_rate,
+            &(batch_size as i64),
+        );
+        println!("Average loss: {}", total_loss / (batch_size as f64));
     }
 }
