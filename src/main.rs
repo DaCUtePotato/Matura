@@ -6,7 +6,8 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-// use std::random::random;
+// For multi-threading
+use rayon::prelude::*;
 
 mod fourier;
 mod nn;
@@ -74,9 +75,9 @@ fn main() {
     }
     if train {
         // Define model parameters
-        let memory_lane_size = 256;
+        let memory_lane_size = 1024;
         let num_classes = 2;
-        let batch_size = 0;
+        let batch_size = 8;
 
         // This must be equivalent to the fourier frame size
         let input_size: usize = 2048;
@@ -106,11 +107,10 @@ fn main() {
         let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
         let training_set = data_collection.split_off(split_index);
         let validation_set = data_collection;
-
         // Create model
         let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
-        if batch_size == 0 {
+        if batch_size == 1 {
             // Train the model on training set
             let mut progress: usize = 0;
             for epoch in 0..epochs {
@@ -132,7 +132,50 @@ fn main() {
                 println!("-----------------------------------------");
             }
         } else {
-            // TODO: Implement multithreaded training runs in batches
+            let chunks = training_set.chunks(batch_size).collect::<Vec<&[Data]>>();
+
+            let mut progress = 0;
+            for epoch in 0..epochs {
+                for batch in &chunks {
+                    println!("-----------------------------------------");
+                    println!("On epoch {} out of {}", epoch + 1, epochs);
+
+                    let current_lr = learning_rate
+                        - (learning_rate - final_learning_rate) * (epoch + 1) as f64
+                            / epochs as f64;
+                    let current_batch_size = batch.len();
+
+                    let model_ref = &model;
+
+                    let results: Vec<_> = batch
+                        .par_iter()
+                        .map(|data| {
+                            let (hidden_states, output) = model_ref.train_forward(&data.fourier);
+                            (hidden_states, output, data.class.clone())
+                        })
+                        .collect();
+
+                    let mut all_states = Vec::with_capacity(current_batch_size);
+                    let mut all_output = Vec::with_capacity(current_batch_size);
+                    let mut all_actual = Vec::with_capacity(current_batch_size);
+
+                    for (states, output, actual) in results {
+                        all_states.push(states);
+                        all_actual.push(actual);
+                        all_output.push(output.to_vec());
+                    }
+
+                    println!(
+                        "Progress: {}%",
+                        100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
+                    );
+                    progress += 1;
+
+                    model.gitgud_batched(&current_lr, &all_output, &all_actual, &all_states);
+                }
+                println!("Epoch {}/{} done!", epoch + 1, epochs);
+                println!("-----------------------------------------");
+            }
         }
 
         // Calculate validation loss after training
@@ -268,7 +311,7 @@ fn main() {
         // Define frames
         let frame_size: usize = 2048;
         let hop_size: usize = frame_size / 4; // For 75% overlap
-        let audio_dir = "audio.wav";
+        let audio_dir = "test_audio/sine_880Hz.wav";
 
         // Read WAV file and apply framing
         let mut audio = hound::WavReader::open(audio_dir).unwrap();
