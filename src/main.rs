@@ -220,13 +220,15 @@ fn main() {
         let init_learning_rate_exponent_range: Vec<f64> = vec![2., 3.];
         let final_learning_rate_exponent_range: Vec<f64> = vec![4., 6.];
         let memory_lane_sizes: Vec<usize> = vec![64, 128, 256, 512, 1024];
+        let batch_size_range: Vec<usize> = vec![1, 4, 8];
 
-        // Hyper parameters
+        // Hyper parameters/initialization
         let trials = memory_lane_sizes.len() * 20; //Number of full training runs
         let mut best_lr: f64 = 1e-3;
         let mut best_mem_lane = 512;
         let mut best_val_loss = f64::INFINITY; //MUAHMUAH INFINITE LOSS
         let mut best_final_lr = 0.;
+        let mut best_batch_size = 1;
 
         // Define splits
         let training_split = 0.8;
@@ -262,25 +264,85 @@ fn main() {
             let final_learning_rate: f64 = f64::powf(10., final_lr_exponent);
 
             let memory_lane_size = memory_lane_sizes[rng.random_range(0..memory_lane_sizes.len())];
+
+            let batch_size = batch_size_range[rng.random_range(0..batch_size_range.len())];
+
             // Create model
             let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
 
-            // Train the model on training set
-            for epoch in 0..epochs {
-                // Linearly decreasing lr with epoch progression
-                let current_lr = init_learning_rate
-                    - (init_learning_rate - final_learning_rate) * (epoch + 1) as f64
-                        / epochs as f64;
-
-                println!("Current learning rate is: {}", current_lr);
-
-                for data in &training_set {
-                    let (fourier, class) = (&data.fourier, &data.class);
-                    let (hidden_states, output) = model.train_forward(fourier);
-                    model.gitgud(&current_lr, &output, class, &hidden_states);
+            if batch_size == 1 {
+                // Train the model on training set
+                let mut progress: usize = 0;
+                for epoch in 0..epochs {
+                    let current_lr = init_learning_rate
+                        - (init_learning_rate - final_learning_rate) * (epoch + 1) as f64
+                            / epochs as f64;
+                    for data in &training_set {
+                        println!("-----------------------------------------");
+                        println!("On epoch {} out of {}", epoch + 1, epochs);
+                        let (fourier, class) = (&data.fourier, &data.class);
+                        let (hidden_states, output) = model.train_forward(fourier);
+                        model.gitgud(&current_lr, &output, class, &hidden_states);
+                        println!(
+                            "Progress: {}%",
+                            100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
+                        );
+                        progress += 1;
+                    }
+                    println!("Epoch {}/{} done!", epoch + 1, epochs);
+                    println!("-----------------------------------------");
                 }
-                println!("Epoch {}/{} done!", epoch + 1, epochs);
-                println!(".........................................");
+            } else {
+                let chunks = training_set.chunks(batch_size).collect::<Vec<&[Data]>>();
+
+                let mut all_states = Vec::with_capacity(batch_size);
+                let mut all_output = Vec::with_capacity(batch_size);
+                let mut all_actual = Vec::with_capacity(batch_size);
+
+                let mut progress = 0;
+                for epoch in 0..epochs {
+                    for batch in &chunks {
+                        println!("-----------------------------------------");
+                        println!("On epoch {} out of {}", epoch + 1, epochs);
+
+                        let current_lr = init_learning_rate
+                            - (init_learning_rate - final_learning_rate) * (epoch + 1) as f64
+                                / epochs as f64;
+                        let current_batch_size = batch.len();
+
+                        // Clear vectors
+                        all_states.clear();
+                        all_output.clear();
+                        all_actual.clear();
+
+                        let model_ref = &model;
+
+                        let results: Vec<_> = batch
+                            .par_iter()
+                            .map(|data| {
+                                let (hidden_states, output) =
+                                    model_ref.train_forward(&data.fourier);
+                                (hidden_states, output, data.class.clone())
+                            })
+                            .collect();
+
+                        for (states, output, actual) in results {
+                            all_states.push(states);
+                            all_actual.push(actual);
+                            all_output.push(output.to_vec());
+                        }
+
+                        println!(
+                            "Progress: {}%",
+                            100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
+                        );
+                        progress += current_batch_size;
+
+                        model.gitgud_batched(&current_lr, &all_output, &all_actual, &all_states);
+                    }
+                    println!("Epoch {}/{} done!", epoch + 1, epochs);
+                    println!("-----------------------------------------");
+                }
             }
 
             let mut validation_losses: Vec<f64> = vec![];
@@ -299,14 +361,15 @@ fn main() {
                 best_lr = init_learning_rate;
                 best_final_lr = final_learning_rate;
                 best_mem_lane = memory_lane_size;
+                best_batch_size = batch_size;
             };
             // Print some information
             println!("-----------------------------------------");
             println!("Progress: {}%", 100. * (i as f64) / (trials as f64));
             println!("Validation Loss: {}", validation_loss);
             println!(
-                "Best initial lr: {}, best final lr: {}, best memory lane size: {}",
-                best_lr, best_final_lr, best_mem_lane
+                "Best initial lr: {}, best final lr: {}, best memory lane size: {}, best batch size: {}",
+                best_lr, best_final_lr, best_mem_lane, best_batch_size
             );
             println!("-----------------------------------------");
         }
