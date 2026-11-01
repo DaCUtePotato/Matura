@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use rand::RngExt;
 use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
+use rayon::prelude::*;
 use std::f64;
 
 pub fn sigmoid(aaaaa: &[f64]) -> Vec<f64> {
@@ -170,12 +171,10 @@ impl Matrix {
         self.data[row * self.columns + column] = value;
     }
     pub fn madd(&mut self, other: &Matrix) {
-        self.data = self
-            .data
-            .iter()
+        self.data
+            .iter_mut()
             .zip(other.data.iter())
-            .map(|(x1, x2)| x1 + x2)
-            .collect::<Vec<f64>>();
+            .for_each(|(x1, x2)| *x1 += x2);
     }
     pub fn transmult(&self, vector: &[f64]) -> Vec<f64> {
         (0..self.columns)
@@ -409,7 +408,7 @@ impl LSTM {
         );
     }
     pub fn calculate_changes_sum(
-        &mut self,
+        &self,
         a_t: &[f64],
         saved_hidden_states: &[LSTMHiddenState],
     ) -> sum_changes {
@@ -790,69 +789,47 @@ impl Model {
         actual: &[Vec<f64>],
         all_saved_hidden_states: &[Vec<LSTMHiddenState>],
     ) {
-        let mut lstm_total_changes: Vec<sum_changes> = vec![];
-        let mut ch_weights_changes: Vec<Matrix> = vec![];
-        let mut ch_bias_changes: Vec<Vec<f64>> = vec![];
-        let mut total_loss = 0.;
-
         let batch_size = all_saved_hidden_states.len();
 
-        for i in 0..batch_size {
-            let sample = &all_saved_hidden_states[i];
-            let sample_actual = &actual[i];
-            let sample_output = &output[i];
-            let (change_bias, change_weights, first_loss) = ClassificationHead::calculate_change(
-                &self.classification_head,
-                sample_actual,
-                sample_output,
-                &sample[sample.len() - 1].main_lane,
-                learning_rate,
-                &(batch_size as i64),
-            );
-            ch_weights_changes.push(change_weights);
-            ch_bias_changes.push(change_bias);
+        let result = (0..batch_size)
+            .into_par_iter()
+            .map(|i| {
+                let sample = &all_saved_hidden_states[i];
+                let sample_actual = &actual[i];
+                let sample_output = &output[i];
 
-            lstm_total_changes.push(LSTM::calculate_changes_sum(
-                &mut self.lstm,
-                &first_loss,
-                sample,
-            ));
+                let (change_bias, change_weights, first_loss) =
+                    ClassificationHead::calculate_change(
+                        &self.classification_head,
+                        sample_actual,
+                        sample_output,
+                        &sample[sample.len() - 1].main_lane,
+                        learning_rate,
+                        &(batch_size as i64),
+                    );
 
-            total_loss += loss(sample_output, sample_actual);
-        }
-        let ch_weights_change = ch_weights_changes
-            .into_iter()
-            .reduce(|mut acc, change| {
-                acc.madd(&change);
+                let lstm_changes = LSTM::calculate_changes_sum(&self.lstm, &first_loss, sample);
+
+                let sample_loss = loss(sample_output, sample_actual);
+                (change_weights, change_bias, lstm_changes, sample_loss)
+            })
+            .reduce_with(|mut acc, item| {
+                acc.0.madd(&item.0);
+                acc.1 = add(&acc.1, &item.1);
+                acc.2.add(&item.2);
+                acc.3 += item.3;
                 acc
             })
             .unwrap();
-        let ch_bias_change = ch_bias_changes
-            .into_iter()
-            .reduce(|mut acc, change| {
-                acc = add(&acc, &change);
-                acc
-            })
-            .unwrap();
-        ClassificationHead::apply_changes(
-            &mut self.classification_head,
-            ch_bias_change,
-            ch_weights_change,
-        );
 
-        let lstm_sum_changes = lstm_total_changes
-            .into_iter()
-            .reduce(|mut acc, change| {
-                acc.add(&change);
-                acc
-            })
-            .unwrap();
+        ClassificationHead::apply_changes(&mut self.classification_head, result.1, result.0);
+
         LSTM::change_weights_batched(
             &mut self.lstm,
-            lstm_sum_changes,
+            result.2,
             learning_rate,
             &(batch_size as i64),
         );
-        println!("Average loss: {}", total_loss / (batch_size as f64));
+        println!("Average loss: {}", result.3 / (batch_size as f64));
     }
 }

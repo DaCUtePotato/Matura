@@ -134,6 +134,10 @@ fn main() {
         } else {
             let chunks = training_set.chunks(batch_size).collect::<Vec<&[Data]>>();
 
+            let mut all_states = Vec::with_capacity(batch_size);
+            let mut all_output = Vec::with_capacity(batch_size);
+            let mut all_actual = Vec::with_capacity(batch_size);
+
             let mut progress = 0;
             for epoch in 0..epochs {
                 for batch in &chunks {
@@ -145,6 +149,11 @@ fn main() {
                             / epochs as f64;
                     let current_batch_size = batch.len();
 
+                    // Clear vectors
+                    all_states.clear();
+                    all_output.clear();
+                    all_actual.clear();
+
                     let model_ref = &model;
 
                     let results: Vec<_> = batch
@@ -154,10 +163,6 @@ fn main() {
                             (hidden_states, output, data.class.clone())
                         })
                         .collect();
-
-                    let mut all_states = Vec::with_capacity(current_batch_size);
-                    let mut all_output = Vec::with_capacity(current_batch_size);
-                    let mut all_actual = Vec::with_capacity(current_batch_size);
 
                     for (states, output, actual) in results {
                         all_states.push(states);
@@ -169,7 +174,7 @@ fn main() {
                         "Progress: {}%",
                         100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
                     );
-                    progress += 1;
+                    progress += current_batch_size;
 
                     model.gitgud_batched(&current_lr, &all_output, &all_actual, &all_states);
                 }
