@@ -1,37 +1,66 @@
+// Imports...
 use crate::fourier::{fft::*, split_audio::*};
+use crate::nn::helpers::*;
 use crate::nn::model::*;
 use rand::seq::SliceRandom;
 use rand::{RngExt, rng};
 use std::env;
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::thread::current;
+
 // For multi-threading
 use rayon::prelude::*;
 
 mod fourier;
 mod nn;
 
+// Constants
+// Constant used for fouriering and training
+const FRAME_SIZE: usize = 2048;
+
+// Define model parameters
+const MEMORY_LANE_SIZE: usize = 1024;
+const NUM_CLASSES: usize = 2;
+const LOSS_FILE_PATH: &str = "losses";
+const VAL_LOSS_FILE_PATH: &str = "validation_losses";
+const BATCH_SIZE: usize = 4;
+
+// Define training parameters
+const LEARNING_RATE: f64 = 1e-2; // Initial learning rate
+const DEC_CONST: f64 = 0.1; // For short trainings, fairly fast decay
+const FINAL_LEARNING_RATE: f64 = 1e-6;
+const MODEL_FILE_PATH: &str = "Timmy.json";
+
+// Temporary
+const LR_FILE_PATH: &str = "lr";
+
 fn main() {
+    // For handling arguments
     let mut fourier: bool = false;
-    let mut train: bool = false;
+    let mut training: bool = false;
     let mut run: bool = false;
     let mut hyper: bool = false;
+    let mut train_continue: bool = false;
+    let mut plot = false;
 
     let args: Vec<String> = env::args().collect();
     for arg in args {
         match arg.as_str() {
             "fourier" => fourier = true,
-            "train" => train = true,
+            "train" => training = true,
             "run" => run = true,
             "hyperparameters" => hyper = true,
+            "train-continue" => train_continue = true,
+            "plot" => plot = true,
             _ => {}
         }
     }
     if fourier {
         // Definitions
-        let frame_size: usize = 2048;
-        let hop_size: usize = frame_size / 4; // For 75% overlap
+        let hop_size: usize = FRAME_SIZE / 4; // For 75% overlap
         let label: Vec<f64> = vec![1., 0.];
 
         // Will take all .wav files in this directory
@@ -49,7 +78,7 @@ fn main() {
             let class = label.clone();
 
             // Split audio
-            let frames = split_audio(unhound(&mut audio), frame_size, hop_size);
+            let frames = split_audio(unhound(&mut audio), FRAME_SIZE, hop_size);
 
             // Apply Hann windowing algorithm on the windows
             let hanned = hann(&frames);
@@ -65,28 +94,13 @@ fn main() {
         }
         // Save labelled data
         let json = serde_json::to_string_pretty(&data_collection)
-            .expect("Oh magaaaaud failed to convert ur goofy struct to string D:");
-
-        // Save weights
+            .expect("Error turning data collection to string");
         let mut file = File::create(data_file_name).unwrap();
         file.write_all(json.as_bytes())
-            .expect("Oh whoopsies, writing no worky work");
+            .expect(&format!("Failed to write to {}", data_file_name));
         println!("Data saved successfully...")
     }
-    if train {
-        // Define model parameters
-        let memory_lane_size = 1024;
-        let num_classes = 2;
-        let batch_size = 8;
-
-        // This must be equivalent to the fourier frame size
-        let input_size: usize = 2048;
-
-        // Define training parameters
-        let learning_rate: f64 = 1e-2;
-        let epochs = 15;
-        let final_learning_rate: f64 = 1e-6;
-
+    if training {
         // Define splits
         let training_split = 0.8;
         let validation_split = 1. - training_split;
@@ -107,104 +121,109 @@ fn main() {
         let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
         let training_set = data_collection.split_off(split_index);
         let validation_set = data_collection;
+
         // Create model
-        let mut model = Model::new(&input_size, &memory_lane_size, &num_classes);
+        let mut model = Model::new(&FRAME_SIZE, &MEMORY_LANE_SIZE, &NUM_CLASSES);
 
-        if batch_size == 1 {
-            // Train the model on training set
-            let mut progress: usize = 0;
-            for epoch in 0..epochs {
-                let current_lr = learning_rate
-                    - (learning_rate - final_learning_rate) * (epoch + 1) as f64 / epochs as f64;
-                for data in &training_set {
-                    println!("-----------------------------------------");
-                    println!("On epoch {} out of {}", epoch + 1, epochs);
-                    let (fourier, class) = (&data.fourier, &data.class);
-                    let (hidden_states, output) = model.train_forward(fourier);
-                    model.gitgud(&current_lr, &output, class, &hidden_states);
-                    println!(
-                        "Progress: {}%",
-                        100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
-                    );
-                    progress += 1;
-                }
-                println!("Epoch {}/{} done!", epoch + 1, epochs);
-                println!("-----------------------------------------");
-            }
-        } else {
-            let chunks = training_set.chunks(batch_size).collect::<Vec<&[Data]>>();
+        // Infinite loop which will break when validation loss
+        // plateaus or increases
+        let mut running = true;
+        let mut epoch = 0;
+        let mut current_lr = LEARNING_RATE;
+        // while running == true {
+        while epoch <= 20 {
+            // Train the model for one epoch, i.e. once through all of the training set
+            train(
+                BATCH_SIZE,
+                current_lr,
+                &training_set,
+                &mut model,
+                Some(&LOSS_FILE_PATH.to_string()),
+            );
 
-            let mut all_states = Vec::with_capacity(batch_size);
-            let mut all_output = Vec::with_capacity(batch_size);
-            let mut all_actual = Vec::with_capacity(batch_size);
+            // Calculate validation loss after every epoch
+            let validation_loss = calculate_validation_loss(
+                &model,
+                &validation_set,
+                Some(&VAL_LOSS_FILE_PATH.to_string()),
+            );
 
-            let mut progress = 0;
-            for epoch in 0..epochs {
-                for batch in &chunks {
-                    println!("-----------------------------------------");
-                    println!("On epoch {} out of {}", epoch + 1, epochs);
+            println!("Validation loss: {}", validation_loss);
 
-                    let current_lr = learning_rate
-                        - (learning_rate - final_learning_rate) * (epoch + 1) as f64
-                            / epochs as f64;
-                    let current_batch_size = batch.len();
+            // Modify learning rate
+            current_lr = calc_new_lr_exp(LEARNING_RATE, DEC_CONST, epoch);
+            epoch += 1;
 
-                    // Clear vectors
-                    all_states.clear();
-                    all_output.clear();
-                    all_actual.clear();
+            // TODO: Check the ratios of the last five epochs!! Then continue or abort training accordingly
+        }
+        save_model(&model, MODEL_FILE_PATH);
+    }
+    if train_continue {
+        // Define splits
+        let training_split = 0.8;
+        let validation_split = 1. - training_split;
 
-                    let model_ref = &model;
-
-                    let results: Vec<_> = batch
-                        .par_iter()
-                        .map(|data| {
-                            let (hidden_states, output) = model_ref.train_forward(&data.fourier);
-                            (hidden_states, output, data.class.clone())
-                        })
-                        .collect();
-
-                    for (states, output, actual) in results {
-                        all_states.push(states);
-                        all_actual.push(actual);
-                        all_output.push(output.to_vec());
-                    }
-
-                    println!(
-                        "Progress: {}%",
-                        100. * (progress as f64) / (training_set.len() as f64 * epochs as f64)
-                    );
-                    progress += current_batch_size;
-
-                    model.gitgud_batched(&current_lr, &all_output, &all_actual, &all_states);
-                }
-                println!("Epoch {}/{} done!", epoch + 1, epochs);
-                println!("-----------------------------------------");
-            }
+        // Read data from files
+        let mut data_collection: Vec<Data> = vec![];
+        let data = ["class1.json", "class2.json"];
+        for content in data {
+            let stuff = fs::read_to_string(content).expect("Failed to read data");
+            let data_collection_temp: Vec<Data> =
+                serde_json::from_str(&stuff).expect("Failed to deserialize content");
+            data_collection.extend(data_collection_temp);
         }
 
-        // Calculate validation loss after training
-        let mut validation_losses: Vec<f64> = vec![];
+        // Split data into training and validation sets
+        let mut rng = rng();
+        data_collection.shuffle(&mut rng);
+        let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
+        let training_set = data_collection.split_off(split_index);
+        let validation_set = data_collection;
 
-        for data in &validation_set {
-            let fourier = &data.fourier;
-            let output: Vec<f64> = model.forward(fourier);
-            validation_losses.push(loss(&output, &data.class));
+        // Read weights, define model
+        let content = fs::read_to_string("Timmy.json").expect("Reading Timmy didn't work");
+        let mut model: Model =
+            serde_json::from_str(&content).expect("Ran into a problem trying to deserialize Timmy");
+
+        let mut running = true;
+        let mut epoch = 0;
+        let mut current_lr = LEARNING_RATE;
+        // while running == true {
+        while epoch <= 20 {
+            // For graphing + information: Write lr to file
+            write_to_file(LR_FILE_PATH, &current_lr.to_string());
+            // Train the model for one epoch, i.e. once through all of the training set
+            train(
+                BATCH_SIZE,
+                current_lr,
+                &training_set,
+                &mut model,
+                Some(&LOSS_FILE_PATH.to_string()),
+            );
+
+            // Calculate validation loss after every epoch
+            let validation_loss = calculate_validation_loss(
+                &model,
+                &validation_set,
+                Some(&VAL_LOSS_FILE_PATH.to_string()),
+            );
+
+            println!("Validation loss: {}", validation_loss);
+
+            // Modify learning rate
+            current_lr = calc_new_lr_exp(LEARNING_RATE, DEC_CONST, epoch);
+            epoch += 1;
+
+            // TODO: Check the ratios of the last five epochs!! Then continue or abort training accordingly
         }
+        save_model(&model, MODEL_FILE_PATH);
 
-        let validation_loss =
-            validation_losses.iter().sum::<f64>() / (validation_losses.len() as f64);
-
+        let validation_loss = calculate_validation_loss(
+            &model,
+            &validation_set,
+            Some(&VAL_LOSS_FILE_PATH.to_string()),
+        );
         println!("Validation loss: {}", validation_loss);
-
-        // Save weights
-        let json = serde_json::to_string(&model)
-            .expect("Idk uhm error ehehe making the model a json failed aifink :) Have funnn :D");
-
-        let mut file = File::create("Timmy.json").unwrap();
-        file.write_all(json.as_bytes())
-            .expect("Oh whoopsies, writing no worky work");
-        println!("Model saved successfully...")
     }
     if hyper {
         // Define model parameters
@@ -329,7 +348,7 @@ fn main() {
                         for (states, output, actual) in results {
                             all_states.push(states);
                             all_actual.push(actual);
-                            all_output.push(output.to_vec());
+                            all_output.push(output);
                         }
 
                         println!(
@@ -371,6 +390,7 @@ fn main() {
                 "Best initial lr: {}, best final lr: {}, best memory lane size: {}, best batch size: {}",
                 best_lr, best_final_lr, best_mem_lane, best_batch_size
             );
+            println!("Best val loss: {}", best_val_loss);
             println!("-----------------------------------------");
         }
         println!("Best validation loss: {}", best_val_loss);
@@ -399,5 +419,8 @@ fn main() {
 
         let output: Vec<f64> = model.forward(&fouriered);
         println!("Result: {:?}", output)
+    }
+    if plot {
+        plot_losses("losses", "validation_losses", "graph.png");
     }
 }

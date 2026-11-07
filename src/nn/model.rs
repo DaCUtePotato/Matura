@@ -765,7 +765,7 @@ impl Model {
         output: &[f64],
         actual: &[f64],
         saved_hidden_states: &[LSTMHiddenState],
-    ) {
+    ) -> f64 {
         let first_loss = ClassificationHead::gitgud(
             &mut self.classification_head,
             learning_rate,
@@ -779,7 +779,7 @@ impl Model {
             saved_hidden_states,
             learning_rate,
         );
-        println!("Loss: {:?}", loss(output, actual))
+        loss(output, actual)
     }
 
     pub fn gitgud_batched(
@@ -788,7 +788,7 @@ impl Model {
         output: &[Vec<f64>],
         actual: &[Vec<f64>],
         all_saved_hidden_states: &[Vec<LSTMHiddenState>],
-    ) {
+    ) -> f64 {
         let batch_size = all_saved_hidden_states.len();
 
         let result = (0..batch_size)
@@ -830,6 +830,6 @@ impl Model {
             learning_rate,
             &(batch_size as i64),
         );
-        println!("Average loss: {}", result.3 / (batch_size as f64));
+        result.3 / (batch_size as f64)
     }
 }
