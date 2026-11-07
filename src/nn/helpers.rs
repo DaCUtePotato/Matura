@@ -1,4 +1,5 @@
 use plotters::prelude::*;
+use serde_json::map;
 use std::f64;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -191,4 +192,67 @@ pub fn write_to_file(path: &str, content: &str) {
         .open(path)
         .expect("Failed to open file");
     writeln!(file, "{}", content).expect("Ran into issue writing loss");
+}
+
+pub fn split_data(mut data_collection: Vec<Data>, training_split: f64) -> (Vec<Data>, Vec<Data>) {
+    let mut rng = rng();
+    data_collection.shuffle(&mut rng);
+    let split_index = (data_collection.len() as f64 * (1. - training_split)).round() as usize;
+    let training_set = data_collection.split_off(split_index);
+    (training_set, data_collection)
+}
+
+pub fn read_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
+    let mut data_collection: Vec<Data> = vec![];
+    for content in paths {
+        let stuff = fs::read_to_string(content).expect("Failed to read data");
+        let data_collection_temp: Vec<Data> =
+            serde_json::from_str(&stuff).expect("Failed to deserialize content");
+        data_collection.extend(data_collection_temp);
+    }
+    data_collection
+}
+
+pub fn kill_no_kill(validation_losses: &[f64; PATIENCE], threshold: f64) -> bool {
+    validation_losses
+        .windows(2)
+        .map(|w| w[0] / w[1])
+        .sum::<f64>()
+        / (PATIENCE as f64)
+        > threshold
+}
+
+pub fn calc_accuracy(model: &Model, validation_set: &[Data]) -> f64 {
+    let sum = validation_set
+        .iter()
+        // Run the model on every piece of data in the dataset and filter
+        // only the ones where it was correct
+        .filter(|data| {
+            let output = model.forward(&data.fourier);
+            // find max index
+            let max_index = *output
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1)) // Finds maximum value
+                .map(|(_, i)| i) //
+                .unwrap() as usize;
+
+            // Find index where target is 1.
+            let target_index = data.class.iter().position(|&x| x == 1.).unwrap();
+
+            // Compare the two indices
+            max_index == target_index
+        })
+        // Count how many times the model was right
+        .count() as f64;
+
+    // Average
+    sum / (validation_set.len() as f64)
+}
+
+pub fn read_model(model_path: &str) -> Model {
+    let content = fs::read_to_string(model_path).expect("Reading model didn't work");
+    let model: Model =
+        serde_json::from_str(&content).expect("Ran into a problem trying to deserialize model");
+    model
 }

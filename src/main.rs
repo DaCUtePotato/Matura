@@ -7,9 +7,7 @@ use rand::{RngExt, rng};
 use std::env;
 use std::fs;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::thread::current;
 
 // For multi-threading
 use rayon::prelude::*;
@@ -20,6 +18,7 @@ mod nn;
 // Constants
 // Constant used for fouriering and training
 const FRAME_SIZE: usize = 2048;
+const HOP_SIZE: usize = FRAME_SIZE / 4;
 
 // Define model parameters
 const MEMORY_LANE_SIZE: usize = 1024;
@@ -29,10 +28,16 @@ const VAL_LOSS_FILE_PATH: &str = "validation_losses";
 const BATCH_SIZE: usize = 4;
 
 // Define training parameters
-const LEARNING_RATE: f64 = 1e-2; // Initial learning rate
-const DEC_CONST: f64 = 0.1; // For short trainings, fairly fast decay
-const FINAL_LEARNING_RATE: f64 = 1e-6;
+const LEARNING_RATE: f64 = 1e-3; // Initial learning rate
+const DEC_CONST: f64 = 0.1; // For short trainings, fairly fast decay; half-life of ~6 epochs
 const MODEL_FILE_PATH: &str = "Timmy.json";
+const TRAINING_SPLIT: f64 = 0.8;
+const DATA: [&str; NUM_CLASSES] = ["class1.json", "class2.json"]; // Data for all classes
+const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
+const VAL_THRESHOLD: f64 = 0.9; // Validation loss ratio threshold
+
+// Running parameters
+const AUDIO_DIR: &str = "sine-sawtooth/sawtooth/sawtooth_220Hz_v3.wav";
 
 // Temporary
 const LR_FILE_PATH: &str = "lr";
@@ -45,6 +50,7 @@ fn main() {
     let mut hyper: bool = false;
     let mut train_continue: bool = false;
     let mut plot = false;
+    let mut accuracy = false;
 
     let args: Vec<String> = env::args().collect();
     for arg in args {
@@ -55,6 +61,7 @@ fn main() {
             "hyperparameters" => hyper = true,
             "train-continue" => train_continue = true,
             "plot" => plot = true,
+            "accuracy" => accuracy = true,
             _ => {}
         }
     }
@@ -101,37 +108,23 @@ fn main() {
         println!("Data saved successfully...")
     }
     if training {
-        // Define splits
-        let training_split = 0.8;
-        let validation_split = 1. - training_split;
-
         // Read data from files
-        let mut data_collection: Vec<Data> = vec![];
-        let data = ["class1.json", "class2.json"];
-        for content in data {
-            let stuff = fs::read_to_string(content).expect("Failed to read data");
-            let data_collection_temp: Vec<Data> =
-                serde_json::from_str(&stuff).expect("Failed to deserialize content");
-            data_collection.extend(data_collection_temp);
-        }
+        let all_data = read_data(&DATA);
 
         // Split data into training and validation sets
-        let mut rng = rng();
-        data_collection.shuffle(&mut rng);
-        let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
-        let training_set = data_collection.split_off(split_index);
-        let validation_set = data_collection;
+        let (training_set, validation_set) = split_data(all_data, TRAINING_SPLIT);
 
         // Create model
         let mut model = Model::new(&FRAME_SIZE, &MEMORY_LANE_SIZE, &NUM_CLASSES);
 
-        // Infinite loop which will break when validation loss
-        // plateaus or increases
-        let mut running = true;
+        // Initializing dynamic constants for loop
+        let mut running = true; // Always leave this! Even if you're testing!
         let mut epoch = 0;
         let mut current_lr = LEARNING_RATE;
-        // while running == true {
-        while epoch <= 20 {
+        let mut loss_window = [0.; PATIENCE];
+        while running {
+            // For testing:
+            // while epoch <= 20 {
             // Train the model for one epoch, i.e. once through all of the training set
             train(
                 BATCH_SIZE,
@@ -148,37 +141,40 @@ fn main() {
                 Some(&VAL_LOSS_FILE_PATH.to_string()),
             );
 
+            // Shift window and add newest val loss
+            loss_window.rotate_left(1);
+            loss_window[PATIENCE - 1] = validation_loss;
+
             println!("Validation loss: {}", validation_loss);
 
             // Modify learning rate
             current_lr = calc_new_lr_exp(LEARNING_RATE, DEC_CONST, epoch);
             epoch += 1;
 
-            // TODO: Check the ratios of the last five epochs!! Then continue or abort training accordingly
+            // To kill or not to kill...
+            running = !kill_no_kill(&loss_window, VAL_THRESHOLD);
         }
+        println!(
+            "Training stopped. Reason: {}",
+            if running {
+                "Idk you did something"
+            } else {
+                "Validation loss difference did not meet expectations..."
+            }
+        );
+
+        // Save model
         save_model(&model, MODEL_FILE_PATH);
+
+        // Print accuracy
+        println!("Accuracy: {}", calc_accuracy(&model, &validation_set));
     }
     if train_continue {
-        // Define splits
-        let training_split = 0.8;
-        let validation_split = 1. - training_split;
-
         // Read data from files
-        let mut data_collection: Vec<Data> = vec![];
-        let data = ["class1.json", "class2.json"];
-        for content in data {
-            let stuff = fs::read_to_string(content).expect("Failed to read data");
-            let data_collection_temp: Vec<Data> =
-                serde_json::from_str(&stuff).expect("Failed to deserialize content");
-            data_collection.extend(data_collection_temp);
-        }
+        let all_data = read_data(&DATA);
 
         // Split data into training and validation sets
-        let mut rng = rng();
-        data_collection.shuffle(&mut rng);
-        let split_index = (data_collection.len() as f32 * validation_split).round() as usize;
-        let training_set = data_collection.split_off(split_index);
-        let validation_set = data_collection;
+        let (training_set, validation_set) = split_data(all_data, TRAINING_SPLIT);
 
         // Read weights, define model
         let content = fs::read_to_string("Timmy.json").expect("Reading Timmy didn't work");
@@ -188,8 +184,10 @@ fn main() {
         let mut running = true;
         let mut epoch = 0;
         let mut current_lr = LEARNING_RATE;
-        // while running == true {
-        while epoch <= 20 {
+        let mut loss_window = [0.; PATIENCE];
+
+        while running {
+            // while epoch <= 20 {
             // For graphing + information: Write lr to file
             write_to_file(LR_FILE_PATH, &current_lr.to_string());
             // Train the model for one epoch, i.e. once through all of the training set
@@ -208,22 +206,32 @@ fn main() {
                 Some(&VAL_LOSS_FILE_PATH.to_string()),
             );
 
+            // Shift window and add newest val loss
+            loss_window.rotate_left(1);
+            loss_window[PATIENCE - 1] = validation_loss;
+
             println!("Validation loss: {}", validation_loss);
 
             // Modify learning rate
             current_lr = calc_new_lr_exp(LEARNING_RATE, DEC_CONST, epoch);
             epoch += 1;
 
-            // TODO: Check the ratios of the last five epochs!! Then continue or abort training accordingly
+            // To kill or not to kill
+            running = !kill_no_kill(&loss_window, VAL_THRESHOLD);
         }
+        println!(
+            "Training stopped. Reason: {}",
+            if running {
+                "Idk you did something"
+            } else {
+                "Validation loss difference did not meet expectations..."
+            }
+        );
+        // Save model
         save_model(&model, MODEL_FILE_PATH);
 
-        let validation_loss = calculate_validation_loss(
-            &model,
-            &validation_set,
-            Some(&VAL_LOSS_FILE_PATH.to_string()),
-        );
-        println!("Validation loss: {}", validation_loss);
+        // Print accuracy
+        println!("Accuracy: {}", calc_accuracy(&model, &validation_set));
     }
     if hyper {
         // Define model parameters
@@ -396,14 +404,9 @@ fn main() {
         println!("Best validation loss: {}", best_val_loss);
     }
     if run {
-        // Define frames
-        let frame_size: usize = 2048;
-        let hop_size: usize = frame_size / 4; // For 75% overlap
-        let audio_dir = "test_audio/sine_880Hz.wav";
-
         // Read WAV file and apply framing
-        let mut audio = hound::WavReader::open(audio_dir).unwrap();
-        let frames = split_audio(unhound(&mut audio), frame_size, hop_size);
+        let mut audio = hound::WavReader::open(AUDIO_DIR).unwrap();
+        let frames = split_audio(unhound(&mut audio), FRAME_SIZE, HOP_SIZE);
         // Apply Hann windowing algorithm on the windows
         let hanned = hann(&frames);
         // Apply Fourier transform on the "Hanned" windows
@@ -413,14 +416,16 @@ fn main() {
         }
 
         // Read weights
-        let content = fs::read_to_string("Timmy.json").expect("Reading Timmy didn't work");
-        let model: Model =
-            serde_json::from_str(&content).expect("Ran into a problem trying to deserialize Timmy");
-
+        let model = read_model(MODEL_FILE_PATH);
         let output: Vec<f64> = model.forward(&fouriered);
         println!("Result: {:?}", output)
     }
     if plot {
         plot_losses("losses", "validation_losses", "graph.png");
+    }
+    if accuracy {
+        let model = read_model(MODEL_FILE_PATH);
+        let data = read_data(&DATA);
+        println!("Accuracy: {:?}", calc_accuracy(&model, &data))
     }
 }
