@@ -1,5 +1,4 @@
 use plotters::prelude::*;
-use serde_json::map;
 use std::f64;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -12,15 +11,11 @@ pub fn calculate_validation_loss(
     validation_set: &[Data],
     file_path: Option<&String>,
 ) -> f64 {
-    let mut validation_losses: Vec<f64> = vec![];
-
-    for data in validation_set {
-        let fourier = &data.fourier;
-        let output: Vec<f64> = model.forward(fourier);
-        validation_losses.push(loss(&output, &data.class));
-    }
-    let validation_loss: f64 =
-        validation_losses.iter().sum::<f64>() / (validation_losses.len() as f64);
+    let validation_loss = validation_set
+        .par_iter()
+        .map(|data| loss(&model.forward(&data.fourier), &data.class))
+        .sum::<f64>()
+        / (validation_set.len() as f64);
 
     if let Some(x) = file_path {
         let mut file = OpenOptions::new()
@@ -28,7 +23,7 @@ pub fn calculate_validation_loss(
             .append(true) // Appends new writes to the end of file
             .open(x)
             .expect("Failed to open file");
-        writeln!(file, "{:?}", validation_loss).expect("Ran into issue writing val loss");
+        writeln!(file, "{}", validation_loss).expect("Ran into issue writing val loss");
     }
     validation_loss
 }
@@ -118,55 +113,105 @@ fn read_floats(path: &str) -> Vec<f64> {
 pub fn plot_losses(
     losses_file_path: &str,
     val_losses_file_path: &str,
+    lr_file_path: &str,
     output_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Output file
-    let root = BitMapBackend::new(output_path, (1000, 600)).into_drawing_area();
+    // 1. Use SVGBackend for infinitely scalable vector graphics (no pixelation!)
+    let root = SVGBackend::new(output_path, (1000, 600)).into_drawing_area();
     root.fill(&WHITE)?;
 
     // Read files
     let train_losses = read_floats(losses_file_path);
     let val_losses = read_floats(val_losses_file_path);
+    let lr_values = read_floats(lr_file_path);
 
-    let num_epochs = val_losses.len();
+    // Ensure num_epochs accurately reflects the full duration
+    let num_epochs = val_losses.len().max(lr_values.len());
     let num_steps = train_losses.len();
 
-    // Find min and max values for clean scaling
-    let all_values: Vec<f64> = train_losses
+    // Find min and max values for Losses (Primary Y-axis)
+    let loss_values: Vec<f64> = train_losses
         .iter()
         .chain(val_losses.iter())
         .cloned()
         .collect();
-    let min_val = all_values.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_val = all_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min_loss = loss_values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_loss = loss_values
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
 
+    // Find min and max values for Learning Rate (Secondary Y-axis)
+    let min_lr = lr_values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_lr = lr_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    // Set up chart with a right Y-label area for the dual axis
     let mut chart = ChartBuilder::on(&root)
-        .caption("Training and Validation Loss", ("sans-serif", 25))
+        .caption(
+            "Training Loss, Validation Loss & Learning Rate",
+            ("sans-serif", 20),
+        )
         .margin(20)
         .x_label_area_size(40)
         .y_label_area_size(50)
-        .build_cartesian_2d(0f64..num_epochs as f64, min_val..max_val)?;
+        .right_y_label_area_size(50) // Space for the right-hand Y-axis
+        .build_cartesian_2d(0f64..num_epochs as f64, min_loss..max_loss)?
+        .set_secondary_coord(0f64..num_epochs as f64, min_lr..max_lr);
 
+    // Configure primary mesh (Losses on the left)
     chart
         .configure_mesh()
-        .x_labels(val_losses.len())
+        .x_labels(num_epochs.min(20))
         .x_desc("Epochs")
         .y_desc("Loss")
+        .label_style(("sans-serif", 12))
         .draw()?;
 
-    // Plot training loss
-    chart.draw_series(LineSeries::new(
-        train_losses.iter().enumerate().map(|(i, &y)| {
-            let epoch_x = (i as f64) * ((num_epochs as f64) / (num_steps as f64));
-            (epoch_x, y)
-        }),
-        &BLUE.mix(0.6), // Slightly transparent so it looks softer in the background
-    ))?;
-    // Plot val loss
-    chart.draw_series(LineSeries::new(
-        val_losses.iter().enumerate().map(|(j, &y)| (j as f64, y)),
-        &RED,
-    ))?;
+    // Configure secondary mesh (Learning Rate on the right)
+    chart
+        .configure_secondary_axes()
+        .y_desc("Learning Rate")
+        .y_label_formatter(&|y| format!("{:.1e}", y))
+        .label_style(("sans-serif", 12))
+        .draw()?;
+
+    // Plot training loss (Primary axis)
+    chart
+        .draw_series(LineSeries::new(
+            train_losses.iter().enumerate().map(|(i, &y)| {
+                let epoch_x = (i as f64) * ((num_epochs as f64) / (num_steps as f64));
+                (epoch_x, y)
+            }),
+            &BLUE.mix(0.6),
+        ))?
+        .label("Train Loss")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE.mix(0.6)));
+
+    // Plot validation loss (Primary axis)
+    chart
+        .draw_series(LineSeries::new(
+            val_losses.iter().enumerate().map(|(j, &y)| (j as f64, y)),
+            &RED,
+        ))?
+        .label("Val Loss")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+
+    // Plot learning rate (Secondary axis on the right)
+    chart
+        .draw_secondary_series(LineSeries::new(
+            lr_values.iter().enumerate().map(|(j, &y)| (j as f64, y)),
+            &GREEN,
+        ))?
+        .label("Learning Rate")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
+
+    // Draw the legend box
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .label_font(("sans-serif", 12))
+        .draw()?;
 
     root.present()?;
     println!("Graph saved successfully as {}!", output_path);
@@ -213,29 +258,29 @@ pub fn read_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
     data_collection
 }
 
-pub fn kill_no_kill(validation_losses: &[f64; PATIENCE], threshold: f64) -> bool {
+pub fn kill_no_kill_ratios(validation_losses: &[f64; PATIENCE], threshold: f64) -> bool {
     validation_losses
         .windows(2)
         .map(|w| w[0] / w[1])
         .sum::<f64>()
-        / (PATIENCE as f64)
-        > threshold
+        / ((PATIENCE - 1) as f64)
+        < threshold
 }
 
 pub fn calc_accuracy(model: &Model, validation_set: &[Data]) -> f64 {
     let sum = validation_set
-        .iter()
+        .par_iter()
         // Run the model on every piece of data in the dataset and filter
         // only the ones where it was correct
         .filter(|data| {
             let output = model.forward(&data.fourier);
             // find max index
-            let max_index = *output
+            let max_index = output
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.total_cmp(b.1)) // Finds maximum value
-                .map(|(_, i)| i) //
-                .unwrap() as usize;
+                .map(|(i, _)| i) //
+                .unwrap();
 
             // Find index where target is 1.
             let target_index = data.class.iter().position(|&x| x == 1.).unwrap();

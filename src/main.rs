@@ -34,13 +34,17 @@ const MODEL_FILE_PATH: &str = "Timmy.json";
 const TRAINING_SPLIT: f64 = 0.8;
 const DATA: [&str; NUM_CLASSES] = ["class1.json", "class2.json"]; // Data for all classes
 const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
-const VAL_THRESHOLD: f64 = 0.9; // Validation loss ratio threshold
+// Use only if using ratio to stop training
+// const VAL_THRESHOLD: f64 = 0.9; // Validation loss ratio threshold
 
 // Running parameters
-const AUDIO_DIR: &str = "sine-sawtooth/sawtooth/sawtooth_220Hz_v3.wav";
+const AUDIO_DIR: &str = "test2.wav";
 
 // Temporary
 const LR_FILE_PATH: &str = "lr";
+
+// Plotting
+const GRAPH_FILE_PATH: &str = "graph.svg";
 
 fn main() {
     // For handling arguments
@@ -119,12 +123,16 @@ fn main() {
 
         // Initializing dynamic constants for loop
         let mut running = true; // Always leave this! Even if you're testing!
-        let mut epoch = 0;
+        let mut epoch = 1;
         let mut current_lr = LEARNING_RATE;
-        let mut loss_window = [0.; PATIENCE];
+        let mut loss_window = [f64::INFINITY; PATIENCE];
+        let mut best_val_loss: f64 = f64::INFINITY;
         while running {
             // For testing:
             // while epoch <= 20 {
+            // For graphing + information: Write lr to file
+            write_to_file(LR_FILE_PATH, &current_lr.to_string());
+
             // Train the model for one epoch, i.e. once through all of the training set
             train(
                 BATCH_SIZE,
@@ -141,6 +149,20 @@ fn main() {
                 Some(&VAL_LOSS_FILE_PATH.to_string()),
             );
 
+            // Save checkpoint if current val loss is the best
+            if validation_loss < best_val_loss {
+                save_model(&model, MODEL_FILE_PATH);
+                best_val_loss = validation_loss;
+            }
+
+            // Terminate if current val loss is worse than any before it
+            if loss_window.iter().filter(|&x| x < &validation_loss).count() == PATIENCE {
+                println!("Validation loss {}", validation_loss);
+                println!("Validation loss worsened, terminating training");
+                running = false;
+                break;
+            }
+
             // Shift window and add newest val loss
             loss_window.rotate_left(1);
             loss_window[PATIENCE - 1] = validation_loss;
@@ -152,7 +174,8 @@ fn main() {
             epoch += 1;
 
             // To kill or not to kill...
-            running = !kill_no_kill(&loss_window, VAL_THRESHOLD);
+            // If using ratios:
+            // running = !kill_no_kill_ratios(&loss_window, VAL_THRESHOLD);
         }
         println!(
             "Training stopped. Reason: {}",
@@ -182,9 +205,10 @@ fn main() {
             serde_json::from_str(&content).expect("Ran into a problem trying to deserialize Timmy");
 
         let mut running = true;
-        let mut epoch = 0;
+        let mut epoch = 1;
         let mut current_lr = LEARNING_RATE;
-        let mut loss_window = [0.; PATIENCE];
+        let mut loss_window = [f64::INFINITY; PATIENCE];
+        let mut best_val_loss: f64 = f64::INFINITY;
 
         while running {
             // while epoch <= 20 {
@@ -206,6 +230,20 @@ fn main() {
                 Some(&VAL_LOSS_FILE_PATH.to_string()),
             );
 
+            // Save checkpoint if current val loss is the best
+            if validation_loss < best_val_loss {
+                save_model(&model, MODEL_FILE_PATH);
+                best_val_loss = validation_loss;
+            }
+
+            // Terminate if current val loss is worse than any before it
+            if loss_window.iter().filter(|&x| x < &validation_loss).count() == PATIENCE {
+                println!("Validation loss {}", validation_loss);
+                println!("Validation loss worsened, terminating training");
+                running = false;
+                break;
+            }
+
             // Shift window and add newest val loss
             loss_window.rotate_left(1);
             loss_window[PATIENCE - 1] = validation_loss;
@@ -217,7 +255,8 @@ fn main() {
             epoch += 1;
 
             // To kill or not to kill
-            running = !kill_no_kill(&loss_window, VAL_THRESHOLD);
+            // If using ratios
+            // running = !kill_no_kill(&loss_window, VAL_THRESHOLD);
         }
         println!(
             "Training stopped. Reason: {}",
@@ -421,7 +460,12 @@ fn main() {
         println!("Result: {:?}", output)
     }
     if plot {
-        plot_losses("losses", "validation_losses", "graph.png");
+        let _ = plot_losses(
+            LOSS_FILE_PATH,
+            VAL_LOSS_FILE_PATH,
+            LR_FILE_PATH,
+            GRAPH_FILE_PATH,
+        );
     }
     if accuracy {
         let model = read_model(MODEL_FILE_PATH);
