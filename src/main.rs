@@ -39,6 +39,7 @@ const MODEL_FILE_PATH: &str = "Timmy.bin";
 const DATA: [&str; NUM_CLASSES] = ["class1.bin", "class2.bin"]; // Data for all classes
 const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
 const START_EXP: f32 = 3e-1; // val loss threshold where exponentially decaying lr should start
+const MIN_DELTA: f32 = 1e-4; // If validation loss changes less than this over PATIENCE, training will be aborted
 // Use only if using ratio to stop training
 // const VAL_THRESHOLD: f32 = 0.9; // Validation loss ratio threshold
 
@@ -204,9 +205,14 @@ fn main() {
             }
 
             // Terminate if current val loss is worse than any before it
-            if loss_window.iter().filter(|&x| x < &validation_loss).count() == PATIENCE {
+            if loss_window
+                .iter()
+                .filter(|&x| x - validation_loss < MIN_DELTA)
+                .count()
+                == PATIENCE
+            {
                 println!("Validation loss {}", validation_loss);
-                println!("Validation loss worsened, terminating training");
+                println!("Model in danger of overfitting/underperforming, terminating training");
                 running = false;
                 break;
             }
