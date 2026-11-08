@@ -1,6 +1,9 @@
+use bincode::{Decode, Encode, config};
 use plotters::prelude::*;
-use std::f64;
+use std::f32;
+use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::BufReader;
 use std::io::Write;
 
 // This is a file full of helper stuff because main.rs is getting too cluttered at this point
@@ -10,12 +13,12 @@ pub fn calculate_validation_loss(
     model: &Model,
     validation_set: &[Data],
     file_path: Option<&String>,
-) -> f64 {
+) -> f32 {
     let validation_loss = validation_set
         .par_iter()
         .map(|data| loss(&model.forward(&data.fourier), &data.class))
-        .sum::<f64>()
-        / (validation_set.len() as f64);
+        .sum::<f32>()
+        / (validation_set.len() as f32);
 
     if let Some(x) = file_path {
         let mut file = OpenOptions::new()
@@ -30,7 +33,7 @@ pub fn calculate_validation_loss(
 
 pub fn train(
     batch_size: usize,
-    learning_rate: f64,
+    learning_rate: f32,
     training_set: &[Data],
     model: &mut Model,
     loss_file_path: Option<&String>,
@@ -89,7 +92,7 @@ pub fn train(
                     .append(true) // Appends new writes to the end of file
                     .open(x)
                     .expect("Failed to open file");
-                writeln!(file, "{:?}", loss).expect("Ran into issue writing avg loss");
+                writeln!(file, "{}", loss).expect("Ran into issue writing avg loss");
             } else {
                 println!("Average loss: {}", loss)
             }
@@ -97,15 +100,15 @@ pub fn train(
     }
 }
 
-pub fn calc_new_lr_exp(initial_learning_rate: f64, dec_const: f64, epoch: i64) -> f64 {
-    initial_learning_rate * (-(epoch as f64) * dec_const).exp()
+pub fn calc_new_lr_exp(initial_learning_rate: f32, dec_const: f32, epoch: i64) -> f32 {
+    initial_learning_rate * (-(epoch as f32) * dec_const).exp()
 }
 
-fn read_floats(path: &str) -> Vec<f64> {
+fn read_floats(path: &str) -> Vec<f32> {
     fs::read_to_string(path)
         .expect("Failed to open file")
         .lines()
-        .map(|line| line.trim().parse::<f64>().expect("Failed to parse number"))
+        .map(|line| line.trim().parse::<f32>().expect("Failed to parse number"))
         .collect()
 }
 
@@ -130,20 +133,20 @@ pub fn plot_losses(
     let num_steps = train_losses.len();
 
     // Find min and max values for Losses (Primary Y-axis)
-    let loss_values: Vec<f64> = train_losses
+    let loss_values: Vec<f32> = train_losses
         .iter()
         .chain(val_losses.iter())
         .cloned()
         .collect();
-    let min_loss = loss_values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let min_loss = loss_values.iter().cloned().fold(f32::INFINITY, f32::min);
     let max_loss = loss_values
         .iter()
         .cloned()
-        .fold(f64::NEG_INFINITY, f64::max);
+        .fold(f32::NEG_INFINITY, f32::max);
 
     // Find min and max values for Learning Rate (Secondary Y-axis)
-    let min_lr = lr_values.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_lr = lr_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min_lr = lr_values.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max_lr = lr_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
 
     // Set up chart with a right Y-label area for the dual axis
     let mut chart = ChartBuilder::on(&root)
@@ -155,8 +158,8 @@ pub fn plot_losses(
         .x_label_area_size(40)
         .y_label_area_size(50)
         .right_y_label_area_size(50) // Space for the right-hand Y-axis
-        .build_cartesian_2d(0f64..num_epochs as f64, min_loss..max_loss)?
-        .set_secondary_coord(0f64..num_epochs as f64, min_lr..max_lr);
+        .build_cartesian_2d(0f32..num_epochs as f32, min_loss..max_loss)?
+        .set_secondary_coord(0f32..num_epochs as f32, min_lr..max_lr);
 
     // Configure primary mesh (Losses on the left)
     chart
@@ -179,7 +182,7 @@ pub fn plot_losses(
     chart
         .draw_series(LineSeries::new(
             train_losses.iter().enumerate().map(|(i, &y)| {
-                let epoch_x = (i as f64) * ((num_epochs as f64) / (num_steps as f64));
+                let epoch_x = (i as f32) * ((num_epochs as f32) / (num_steps as f32));
                 (epoch_x, y)
             }),
             &BLUE.mix(0.6),
@@ -190,7 +193,7 @@ pub fn plot_losses(
     // Plot validation loss (Primary axis)
     chart
         .draw_series(LineSeries::new(
-            val_losses.iter().enumerate().map(|(j, &y)| (j as f64, y)),
+            val_losses.iter().enumerate().map(|(j, &y)| (j as f32, y)),
             &RED,
         ))?
         .label("Val Loss")
@@ -199,7 +202,7 @@ pub fn plot_losses(
     // Plot learning rate (Secondary axis on the right)
     chart
         .draw_secondary_series(LineSeries::new(
-            lr_values.iter().enumerate().map(|(j, &y)| (j as f64, y)),
+            lr_values.iter().enumerate().map(|(j, &y)| (j as f32, y)),
             &GREEN,
         ))?
         .label("Learning Rate")
@@ -219,14 +222,8 @@ pub fn plot_losses(
 }
 
 pub fn save_model(model: &Model, path: &str) {
-    // Convert model into json string
-    let json =
-        serde_json::to_string(&model).expect("Error making the model a json string. Fun times.");
-
-    let mut file = File::create(path).unwrap();
-    file.write_all(json.as_bytes())
-        .expect(&format!("Failed to write model to file {}", path));
-    println!("Model saved successfully...")
+    let bytes = bincode::encode_to_vec(model, config::standard()).expect("Failed to encode model");
+    fs::write(path, bytes).expect("Failed to write file");
 }
 
 // For testing and graphing things
@@ -239,35 +236,35 @@ pub fn write_to_file(path: &str, content: &str) {
     writeln!(file, "{}", content).expect("Ran into issue writing loss");
 }
 
-pub fn split_data(mut data_collection: Vec<Data>, training_split: f64) -> (Vec<Data>, Vec<Data>) {
+pub fn split_data(mut data_collection: Vec<Data>, training_split: f32) -> (Vec<Data>, Vec<Data>) {
     let mut rng = rng();
     data_collection.shuffle(&mut rng);
-    let split_index = (data_collection.len() as f64 * (1. - training_split)).round() as usize;
+    let split_index = (data_collection.len() as f32 * (1. - training_split)).round() as usize;
     let training_set = data_collection.split_off(split_index);
     (training_set, data_collection)
 }
 
 pub fn read_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
     let mut data_collection: Vec<Data> = vec![];
-    for content in paths {
-        let stuff = fs::read_to_string(content).expect("Failed to read data");
-        let data_collection_temp: Vec<Data> =
-            serde_json::from_str(&stuff).expect("Failed to deserialize content");
+    for path in paths {
+        let bytes = fs::read(path).expect("Failed to read file");
+        let (data_collection_temp, _): (Vec<Data>, usize) =
+            bincode::decode_from_slice(&bytes, config::standard()).expect("Failed to decode file");
         data_collection.extend(data_collection_temp);
     }
     data_collection
 }
 
-pub fn kill_no_kill_ratios(validation_losses: &[f64; PATIENCE], threshold: f64) -> bool {
+pub fn kill_no_kill_ratios(validation_losses: &[f32; PATIENCE], threshold: f32) -> bool {
     validation_losses
         .windows(2)
         .map(|w| w[0] / w[1])
-        .sum::<f64>()
-        / ((PATIENCE - 1) as f64)
+        .sum::<f32>()
+        / ((PATIENCE - 1) as f32)
         < threshold
 }
 
-pub fn calc_accuracy(model: &Model, validation_set: &[Data]) -> f64 {
+pub fn calc_accuracy(model: &Model, validation_set: &[Data]) -> f32 {
     let sum = validation_set
         .par_iter()
         // Run the model on every piece of data in the dataset and filter
@@ -283,21 +280,25 @@ pub fn calc_accuracy(model: &Model, validation_set: &[Data]) -> f64 {
                 .unwrap();
 
             // Find index where target is 1.
-            let target_index = data.class.iter().position(|&x| x == 1.).unwrap();
+            let target_index = data
+                .class
+                .iter()
+                .position(|&x| x > 0.5)
+                .expect("Target class not found or floating point error");
 
             // Compare the two indices
             max_index == target_index
         })
         // Count how many times the model was right
-        .count() as f64;
+        .count() as f32;
 
     // Average
-    sum / (validation_set.len() as f64)
+    sum / (validation_set.len() as f32)
 }
 
 pub fn read_model(model_path: &str) -> Model {
-    let content = fs::read_to_string(model_path).expect("Reading model didn't work");
-    let model: Model =
-        serde_json::from_str(&content).expect("Ran into a problem trying to deserialize model");
+    let bytes = fs::read(model_path).expect("Failed to read file");
+    let (model, _): (Model, usize) =
+        bincode::decode_from_slice(&bytes, config::standard()).expect("Failed to decode");
     model
 }

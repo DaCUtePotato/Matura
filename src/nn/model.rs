@@ -1,33 +1,33 @@
-use serde::{Deserialize, Serialize};
 // This file contains all the prerequisites and the model. It alone doesn't do anything
 // and the model has to be created in main.rs and run/trained there too. This is just
 // for all the framework and functions and stuff
+use bincode::{Decode, Encode};
 use rand::RngExt;
 use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
-use std::f64;
+use std::f32;
 
-pub fn sigmoid(aaaaa: &[f64]) -> Vec<f64> {
-    let mut result: Vec<f64> = vec![];
+pub fn sigmoid(aaaaa: &[f32]) -> Vec<f32> {
+    let mut result: Vec<f32> = vec![];
     for i in aaaaa {
         result.push(1. / (1. + (-i).exp()));
     }
     result
 }
 
-pub fn tanh(bbbbb: &[f64]) -> Vec<f64> {
-    let mut result: Vec<f64> = vec![];
+pub fn tanh(bbbbb: &[f32]) -> Vec<f32> {
+    let mut result: Vec<f32> = vec![];
     for i in bbbbb {
         // major computation save by only computing e^x and e^-x once :oo!!!!!!
-        let ei: f64 = (*i).exp();
-        let mei: f64 = (-i).exp();
+        let ei: f32 = (*i).exp();
+        let mei: f32 = (-i).exp();
         result.push((ei - mei) / (ei + mei));
     }
     result
 }
 
-pub fn linear(input: &[f64], weights: &Matrix, biases: &[f64]) -> Vec<f64> {
+pub fn linear(input: &[f32], weights: &Matrix, biases: &[f32]) -> Vec<f32> {
     weights
         .data
         .chunks(weights.columns)
@@ -37,54 +37,53 @@ pub fn linear(input: &[f64], weights: &Matrix, biases: &[f64]) -> Vec<f64> {
                 .iter()
                 .zip(input.iter())
                 .map(|(w, i)| w * i)
-                .sum::<f64>()
+                .sum::<f32>()
                 + bias
         })
         .collect()
 }
 
-pub fn multiply(a: &[f64], b: &[f64]) -> Vec<f64> {
+pub fn multiply(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b.iter()).map(|(a, b)| a * b).collect()
 }
 
-pub fn add(a: &[f64], b: &[f64]) -> Vec<f64> {
+pub fn add(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b.iter()).map(|(a, b)| a + b).collect()
 }
 
-pub fn concatify(a: &[f64], b: &[f64]) -> Vec<f64> {
-    let mut result: Vec<f64> = a.to_vec();
+pub fn concatify(a: &[f32], b: &[f32]) -> Vec<f32> {
+    let mut result: Vec<f32> = a.to_vec();
     result.extend_from_slice(b);
     result
 }
 
-pub fn softmax(vector: &[f64]) -> Vec<f64> {
-    // Huuuuge computational save by only doing e^valueofvector once
-    let max = vector.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    let eed: Vec<f64> = vector.iter().map(|s| (*s - max).exp()).collect();
-    let sum: f64 = eed.iter().sum();
+pub fn softmax(vector: &[f32]) -> Vec<f32> {
+    let max = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let eed: Vec<f32> = vector.iter().map(|s| (*s - max).exp()).collect();
+    let sum: f32 = eed.iter().sum();
     eed.iter().map(|s| s / sum).collect()
 }
 
-pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &usize, num_outputs: &usize) -> f64 {
-    let range: f64 = f64::sqrt(6. / (*num_inputs as f64 + *num_outputs as f64));
+pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &usize, num_outputs: &usize) -> f32 {
+    let range: f32 = f32::sqrt(6. / (*num_inputs as f32 + *num_outputs as f32));
     rng.sample(Uniform::new(-range, range).unwrap())
 }
 
-pub fn loss(output: &[f64], actual: &[f64]) -> f64 {
-    let mut sum: f64 = 0.;
+pub fn loss(output: &[f32], actual: &[f32]) -> f32 {
+    let mut sum: f32 = 0.;
     for (i, _) in output.iter().enumerate() {
         sum += -actual[i] * (output[i] + 69e-9).ln();
     }
     sum
 }
 
-pub fn update_weights(weights: &mut Matrix, gradient: &Matrix, learning_rate: &f64) {
+pub fn update_weights(weights: &mut Matrix, gradient: &Matrix, learning_rate: &f32) {
     for i in 0..weights.rows {
         for j in 0..weights.columns {
             weights.set(
-                &i,
-                &j,
-                weights.get(&i, &j) - clip(&gradient.get(&i, &j)) * learning_rate,
+                i,
+                j,
+                weights.get(i, j) - clip(&gradient.get(i, j)) * learning_rate,
             )
         }
     }
@@ -93,43 +92,43 @@ pub fn update_weights(weights: &mut Matrix, gradient: &Matrix, learning_rate: &f
 pub fn update_weights_batched(
     weights: &mut Matrix,
     gradient: &Matrix,
-    learning_rate: &f64,
-    batch_size: &f64,
+    learning_rate: &f32,
+    batch_size: &f32,
 ) {
     for i in 0..weights.rows {
         for j in 0..weights.columns {
             weights.set(
-                &i,
-                &j,
-                weights.get(&i, &j) - clip(&gradient.get(&i, &j)) * learning_rate / batch_size,
+                i,
+                j,
+                weights.get(i, j) - clip(&gradient.get(i, j)) * learning_rate / batch_size,
             )
         }
     }
 }
 
-pub fn outer_product(vector1: &[f64], vector2: &[f64]) -> Matrix {
+pub fn outer_product(vector1: &[f32], vector2: &[f32]) -> Matrix {
     let mut result = Matrix::new(&vector2.len(), &vector1.len());
     for (i, value1) in vector1.iter().enumerate() {
         for (j, value2) in vector2.iter().enumerate() {
-            result.set(&i, &j, value1 * value2);
+            result.set(i, j, value1 * value2);
         }
     }
     result
 }
 
-pub fn clip(gradient: &f64) -> f64 {
+pub fn clip(gradient: &f32) -> f32 {
     gradient.clamp(-1., 1.)
 }
 
 // extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Encode, Decode)]
 pub struct NN {
     weights: Matrix,
-    biases: Vec<f64>,
+    biases: Vec<f32>,
 }
 
 impl NN {
-    pub fn forward(&self, input: &[f64]) -> Vec<f64> {
+    pub fn forward(&self, input: &[f32]) -> Vec<f32> {
         linear(input, &self.weights, &self.biases)
     }
     pub fn new(num_inputs: &usize, num_outputs: &usize) -> Self {
@@ -141,19 +140,34 @@ impl NN {
         for i in 0..x.weights.rows {
             for j in 0..x.weights.columns {
                 x.weights
-                    .set(&i, &j, xavier_value(&mut rng, num_inputs, num_outputs));
+                    .set(i, j, xavier_value(&mut rng, num_inputs, num_outputs));
             }
             x.biases.push(0.)
         }
         x
     }
+    pub fn new_s1(num_inputs: &usize, num_outputs: &usize) -> Self {
+        let mut x = NN {
+            weights: Matrix::new(num_outputs, num_inputs),
+            biases: vec![],
+        };
+        let mut rng = rand::rng();
+        for i in 0..x.weights.rows {
+            for j in 0..x.weights.columns {
+                x.weights
+                    .set(i, j, xavier_value(&mut rng, num_inputs, num_outputs));
+            }
+            x.biases.push(1.)
+        }
+        x
+    }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Encode, Decode)]
 pub struct Matrix {
     rows: usize,
     columns: usize,
-    data: Vec<f64>,
+    data: Vec<f32>,
 }
 
 impl Matrix {
@@ -164,10 +178,10 @@ impl Matrix {
             data: vec![0.; rows * columns],
         }
     }
-    pub fn get(&self, row: &usize, column: &usize) -> f64 {
+    pub fn get(&self, row: usize, column: usize) -> f32 {
         self.data[row * self.columns + column]
     }
-    pub fn set(&mut self, row: &usize, column: &usize, value: f64) {
+    pub fn set(&mut self, row: usize, column: usize, value: f32) {
         self.data[row * self.columns + column] = value;
     }
     pub fn madd(&mut self, other: &Matrix) {
@@ -176,13 +190,13 @@ impl Matrix {
             .zip(other.data.iter())
             .for_each(|(x1, x2)| *x1 += x2);
     }
-    pub fn transmult(&self, vector: &[f64]) -> Vec<f64> {
+    pub fn transmult(&self, vector: &[f32]) -> Vec<f32> {
         (0..self.columns)
             .map(|column| {
                 vector
                     .iter()
                     .enumerate()
-                    .map(|(row, value)| self.get(&row, &column) * value)
+                    .map(|(row, value)| self.get(row, column) * value)
                     .sum()
             })
             .collect()
@@ -194,10 +208,32 @@ impl Matrix {
             data: self.data.clone(),
         }
     }
+    pub fn rows(&self) -> std::slice::Chunks<'_, f32> {
+        self.data.chunks(self.columns)
+    }
+    pub fn append(&mut self, vector: &[f32]) {
+        if self.rows > 0 {
+            assert_eq!(
+                vector.len(),
+                self.columns,
+                "Vector length ({}) does not match the column count of the matrix ({})",
+                vector.len(),
+                self.columns
+            );
+        } else {
+            self.columns = vector.len();
+        }
+        self.rows += 1;
+        self.data.extend_from_slice(vector);
+    }
+    pub fn get_row(&self, row: usize) -> Vec<f32> {
+        self.data[0..row].to_vec()
+    }
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Encode, Decode)]
+
 pub struct LSTM {
     // Forget gate
     s1: NN,
@@ -212,10 +248,10 @@ pub struct LSTM {
 impl LSTM {
     pub fn forward_pass(
         &self,
-        memory_lane: &[f64],
-        main_lane: &[f64],
-        input: &[f64],
-    ) -> (Vec<f64>, Vec<f64>) {
+        memory_lane: &[f32],
+        main_lane: &[f32],
+        input: &[f32],
+    ) -> (Vec<f32>, Vec<f32>) {
         let concatified = concatify(main_lane, input);
         let memory_lane = add(
             &multiply(&sigmoid(&self.s1.forward(&concatified)), memory_lane),
@@ -232,7 +268,7 @@ impl LSTM {
     }
     pub fn new(num_inputs: &usize, num_memory_lane: &usize) -> Self {
         LSTM {
-            s1: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
+            s1: NN::new_s1(&(num_inputs + num_memory_lane), num_memory_lane),
             s2: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             t: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             s3: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
@@ -240,9 +276,9 @@ impl LSTM {
     }
     pub fn training_forward_pass(
         &self,
-        memory_lane: &[f64],
-        main_lane: &[f64],
-        input: &[f64],
+        memory_lane: &[f32],
+        main_lane: &[f32],
+        input: &[f32],
     ) -> LSTMHiddenState {
         let concatified = concatify(main_lane, input);
         let s1 = sigmoid(&self.s1.forward(&concatified));
@@ -251,6 +287,7 @@ impl LSTM {
         let t = self.t.forward(&concatified);
         let memory_lane = add(&multiply(&s1, memory_lane), &multiply(&s2, &tanh(&t)));
         let output = multiply(&tanh(&memory_lane), &s3);
+
         LSTMHiddenState {
             concatified,
             memory_lane: memory_lane.clone(),
@@ -262,12 +299,12 @@ impl LSTM {
         }
     }
 
-    // AAAAAAAAH BPTT IS HELL WAAAAAAH HELPPPP
+    // Back-propagation through time :)
     pub fn gitgud(
         &mut self,
-        a_t: &[f64],
+        a_t: &[f32],
         saved_hidden_states: &[LSTMHiddenState],
-        learning_rate: &f64,
+        learning_rate: &f32,
     ) {
         let concatified_size = saved_hidden_states[0].concatified.len();
         let gate_size = saved_hidden_states[0].main_lane.len();
@@ -300,19 +337,19 @@ impl LSTM {
                     &tanh(&state.memory_lane)
                         .iter()
                         .map(|s| 1. - s * s)
-                        .collect::<Vec<f64>>(),
+                        .collect::<Vec<f32>>(),
                 ),
             );
             let c = add(&dc_next, &c_now);
 
-            let dc_bob: Vec<f64> = multiply(&c, &state.s2);
-            let c_bob: Vec<f64> = tanh(&state.t);
-            let t: Vec<f64> = multiply(
+            let dc_bob: Vec<f32> = multiply(&c, &state.s2);
+            let c_bob: Vec<f32> = tanh(&state.t);
+            let t: Vec<f32> = multiply(
                 &dc_bob,
                 &(tanh(&state.t)
                     .iter()
                     .map(|s| 1. - s * s)
-                    .collect::<Vec<f64>>()),
+                    .collect::<Vec<f32>>()),
             );
             let s1 = multiply(
                 &c,
@@ -320,7 +357,7 @@ impl LSTM {
                     &c_prev,
                     &multiply(
                         &state.s1,
-                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
             );
@@ -330,7 +367,7 @@ impl LSTM {
                     &c_bob,
                     &multiply(
                         &state.s2,
-                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
             );
@@ -339,7 +376,7 @@ impl LSTM {
                     &a_t,
                     &multiply(
                         &state.s3,
-                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
                 &tanh(&state.memory_lane),
@@ -383,35 +420,35 @@ impl LSTM {
             &bias_grad_s1
                 .iter()
                 .map(|s| -clip(s) * learning_rate)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.s2.biases = add(
             &self.s2.biases,
             &bias_grad_s2
                 .iter()
                 .map(|s| -clip(s) * learning_rate)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.s3.biases = add(
             &self.s3.biases,
             &bias_grad_s3
                 .iter()
                 .map(|s| -clip(s) * learning_rate)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.t.biases = add(
             &self.t.biases,
             &bias_grad_t
                 .iter()
                 .map(|s| -clip(s) * learning_rate)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
     }
     pub fn calculate_changes_sum(
         &self,
-        a_t: &[f64],
+        a_t: &[f32],
         saved_hidden_states: &[LSTMHiddenState],
-    ) -> sum_changes {
+    ) -> SumChanges {
         let concatified_size = saved_hidden_states[0].concatified.len();
         let gate_size = saved_hidden_states[0].main_lane.len();
 
@@ -442,19 +479,19 @@ impl LSTM {
                     &tanh(&state.memory_lane)
                         .iter()
                         .map(|s| 1. - s * s)
-                        .collect::<Vec<f64>>(),
+                        .collect::<Vec<f32>>(),
                 ),
             );
             let c = add(&dc_next, &c_now);
 
-            let dc_bob: Vec<f64> = multiply(&c, &state.s2);
-            let c_bob: Vec<f64> = tanh(&state.t);
-            let t: Vec<f64> = multiply(
+            let dc_bob: Vec<f32> = multiply(&c, &state.s2);
+            let c_bob: Vec<f32> = tanh(&state.t);
+            let t: Vec<f32> = multiply(
                 &dc_bob,
                 &(tanh(&state.t)
                     .iter()
                     .map(|s| 1. - s * s)
-                    .collect::<Vec<f64>>()),
+                    .collect::<Vec<f32>>()),
             );
             let s1 = multiply(
                 &c,
@@ -462,7 +499,7 @@ impl LSTM {
                     &c_prev,
                     &multiply(
                         &state.s1,
-                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s1.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
             );
@@ -472,7 +509,7 @@ impl LSTM {
                     &c_bob,
                     &multiply(
                         &state.s2,
-                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s2.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
             );
@@ -481,7 +518,7 @@ impl LSTM {
                     &a_t,
                     &multiply(
                         &state.s3,
-                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f64>>(),
+                        &state.s3.iter().map(|s| 1. - s).collect::<Vec<f32>>(),
                     ),
                 ),
                 &tanh(&state.memory_lane),
@@ -516,7 +553,7 @@ impl LSTM {
                 .map(|s| s.clamp(-0.5, 0.5))
                 .collect();
         }
-        sum_changes {
+        SumChanges {
             sum_s1,
             sum_s2,
             sum_t,
@@ -529,11 +566,11 @@ impl LSTM {
     }
     fn change_weights_batched(
         &mut self,
-        sum_changes: sum_changes,
-        learning_rate: &f64,
+        sum_changes: SumChanges,
+        learning_rate: &f32,
         batch_size: &i64,
     ) {
-        let batch_size = *batch_size as f64;
+        let batch_size = *batch_size as f32;
 
         let sum_s1 = sum_changes.sum_s1;
         let sum_s2 = sum_changes.sum_s2;
@@ -555,39 +592,39 @@ impl LSTM {
             &bias_grad_s1
                 .iter()
                 .map(|s| -clip(s) * learning_rate / batch_size)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.s2.biases = add(
             &self.s2.biases,
             &bias_grad_s2
                 .iter()
                 .map(|s| -clip(s) * learning_rate / batch_size)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.s3.biases = add(
             &self.s3.biases,
             &bias_grad_s3
                 .iter()
                 .map(|s| -clip(s) * learning_rate / batch_size)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
         self.t.biases = add(
             &self.t.biases,
             &bias_grad_t
                 .iter()
                 .map(|s| -clip(s) * learning_rate / batch_size)
-                .collect::<Vec<f64>>(),
+                .collect::<Vec<f32>>(),
         );
     }
 }
+#[derive(Debug, PartialEq, Encode, Decode)]
 
-#[derive(Serialize, Deserialize)]
 pub struct ClassificationHead {
     n: NN,
 }
 
 impl ClassificationHead {
-    pub fn forward(&self, input: &[f64]) -> Vec<f64> {
+    pub fn forward(&self, input: &[f32]) -> Vec<f32> {
         // println!("Rows: {:?}", &self.n.weights.rows);
         // println!("Columns: {:?}", &self.n.weights.columns);
         // println!("input size: {:?}", input.len());
@@ -603,23 +640,23 @@ impl ClassificationHead {
     // Backprop for the ClassificationHead
     pub fn gitgud(
         &mut self,
-        learning_rate: &f64,
-        actual: &[f64],
-        output: &[f64],
-        input: &[f64],
-    ) -> Vec<f64> {
+        learning_rate: &f32,
+        actual: &[f32],
+        output: &[f32],
+        input: &[f32],
+    ) -> Vec<f32> {
         // println!("Rows: {:?}", self.n.weights.rows);
         // println!("Columns: {:?}", self.n.weights.columns);
         // println!("Input len: {:?}", input.len());
         // println!("Output len: {:?}", output.len());
 
-        let mut new_loss: Vec<f64> = vec![];
+        let mut new_loss: Vec<f32> = vec![];
 
         let classes = output.len(); // or actual.len()
         for j in 0..input.len() {
             let mut sum = 0.;
             for i in 0..classes {
-                sum += (output[i] - actual[i]) * self.n.weights.get(&i, &j);
+                sum += (output[i] - actual[i]) * self.n.weights.get(i, j);
             }
             new_loss.push(sum);
         }
@@ -628,9 +665,9 @@ impl ClassificationHead {
                 // Review and understand exactly what the hell is going on with this goofy aah
                 // gradient
                 self.n.weights.set(
-                    &i,
-                    &k,
-                    self.n.weights.get(&i, &k) - learning_rate * (output[i] - actual[i]) * val,
+                    i,
+                    k,
+                    self.n.weights.get(i, k) - learning_rate * (output[i] - actual[i]) * val,
                 );
             }
             self.n.biases[i] -= learning_rate * (output[i] - actual[i]);
@@ -639,35 +676,35 @@ impl ClassificationHead {
     }
     fn calculate_change(
         &self,
-        actual: &[f64],
-        output: &[f64],
-        input: &[f64],
-        learning_rate: &f64,
+        actual: &[f32],
+        output: &[f32],
+        input: &[f32],
+        learning_rate: &f32,
         batch_size: &i64,
-    ) -> (Vec<f64>, Matrix, Vec<f64>) {
-        let mut new_loss: Vec<f64> = vec![];
+    ) -> (Vec<f32>, Matrix, Vec<f32>) {
+        let mut new_loss: Vec<f32> = vec![];
 
         let classes = output.len();
 
-        let batch_size = *batch_size as f64;
+        let batch_size = *batch_size as f32;
 
         for j in 0..input.len() {
             let mut sum = 0.;
             for i in 0..classes {
-                sum += (output[i] - actual[i]) * self.n.weights.get(&i, &j);
+                sum += (output[i] - actual[i]) * self.n.weights.get(i, j);
             }
             new_loss.push(sum);
         }
         let mut change_weights: Matrix = Matrix::new(&self.n.weights.rows, &self.n.weights.columns);
-        let mut change_bias: Vec<f64> = vec![];
+        let mut change_bias: Vec<f32> = vec![];
 
         for i in 0..self.n.weights.rows {
             for (k, val) in input.iter().enumerate() {
                 // Review and understand exactly what the hell is going on with this goofy aah
                 // gradient
                 change_weights.set(
-                    &i,
-                    &k,
+                    i,
+                    k,
                     -learning_rate * (output[i] - actual[i]) * val / batch_size,
                 );
             }
@@ -676,25 +713,25 @@ impl ClassificationHead {
 
         (change_bias, change_weights, new_loss)
     }
-    fn apply_changes(&mut self, change_bias: Vec<f64>, change_weights: Matrix) {
+    fn apply_changes(&mut self, change_bias: Vec<f32>, change_weights: Matrix) {
         self.n.weights.madd(&change_weights);
         self.n.biases = add(&self.n.biases, &change_bias);
     }
 }
 
-pub struct sum_changes {
+pub struct SumChanges {
     sum_s1: Matrix,
     sum_s2: Matrix,
     sum_t: Matrix,
     sum_s3: Matrix,
-    bias_grad_s1: Vec<f64>,
-    bias_grad_s2: Vec<f64>,
-    bias_grad_t: Vec<f64>,
-    bias_grad_s3: Vec<f64>,
+    bias_grad_s1: Vec<f32>,
+    bias_grad_s2: Vec<f32>,
+    bias_grad_t: Vec<f32>,
+    bias_grad_s3: Vec<f32>,
 }
 
-impl sum_changes {
-    fn add(&mut self, x: &sum_changes) {
+impl SumChanges {
+    fn add(&mut self, x: &SumChanges) {
         self.sum_s1.madd(&x.sum_s1);
         self.sum_s2.madd(&x.sum_s2);
         self.sum_s3.madd(&x.sum_s3);
@@ -709,17 +746,20 @@ impl sum_changes {
 
 // Yet another struct because of the stupid hidden states that have to be saved
 // in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
+#[derive(Debug, PartialEq, Encode, Decode)]
+
 pub struct LSTMHiddenState {
-    concatified: Vec<f64>,
-    memory_lane: Vec<f64>,
-    main_lane: Vec<f64>,
-    s1: Vec<f64>, // The output of the Sigmoid 1
-    s2: Vec<f64>, // Same here but for Sigmoid 2
-    t: Vec<f64>, // DIFFERENT!! Here, the input is saved, not the output (the vector before tanh) :o
-    s3: Vec<f64>, // You'll never guess...
+    concatified: Vec<f32>,
+    memory_lane: Vec<f32>,
+    main_lane: Vec<f32>,
+    s1: Vec<f32>, // The output of the Sigmoid 1
+    s2: Vec<f32>, // Same here but for Sigmoid 2
+    t: Vec<f32>, // DIFFERENT!! Here, the input is saved, not the output (the vector before tanh) :o
+    s3: Vec<f32>, // You'll never guess...
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Encode, Decode)]
+
 pub struct Model {
     num_memory_lane: usize,
     classification_head: ClassificationHead,
@@ -735,21 +775,32 @@ impl Model {
         }
     }
     // This is a normal run
-    pub fn forward(&self, frames: &[Vec<f64>]) -> Vec<f64> {
-        let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
-        let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
-        for frame in frames {
+    pub fn forward(&self, frames: &Matrix) -> Vec<f32> {
+        let mut memory_lane: Vec<f32> = vec![0.; self.num_memory_lane];
+        let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
+        println!("Frames dimensions: {}, {}", frames.rows, frames.columns);
+        println!("Data len: {}", frames.data.len());
+        for frame in frames.rows() {
             (main_lane, memory_lane) =
                 LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
         }
         ClassificationHead::forward(&self.classification_head, &main_lane)
     }
     // This is where u pull all the stuff u need to backprop
-    pub fn train_forward(&self, frames: &[Vec<f64>]) -> (Vec<LSTMHiddenState>, Vec<f64>) {
-        let mut memory_lane: Vec<f64> = vec![0.; self.num_memory_lane];
-        let mut main_lane: Vec<f64> = vec![0.; self.num_memory_lane];
+    pub fn train_forward(&self, frames: &Matrix) -> (Vec<LSTMHiddenState>, Vec<f32>) {
+        let mut memory_lane: Vec<f32> = vec![0.; self.num_memory_lane];
+        let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut hidden_states: Vec<LSTMHiddenState> = vec![];
-        for frame in frames {
+        for frame in frames.rows() {
+            println!(
+                "Min frame: {:?}",
+                frame.iter().fold(f32::INFINITY, |a, &b| a.min(b))
+            );
+            println!(
+                "Max frame: {:?}",
+                frame.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b))
+            );
+
             let state = LSTM::training_forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
             memory_lane = state.memory_lane.clone();
             main_lane = state.main_lane.clone();
@@ -761,11 +812,11 @@ impl Model {
     // This is where u call the backprops
     pub fn gitgud(
         &mut self,
-        learning_rate: &f64,
-        output: &[f64],
-        actual: &[f64],
+        learning_rate: &f32,
+        output: &[f32],
+        actual: &[f32],
         saved_hidden_states: &[LSTMHiddenState],
-    ) -> f64 {
+    ) -> f32 {
         let first_loss = ClassificationHead::gitgud(
             &mut self.classification_head,
             learning_rate,
@@ -784,11 +835,11 @@ impl Model {
 
     pub fn gitgud_batched(
         &mut self,
-        learning_rate: &f64,
-        output: &[Vec<f64>],
-        actual: &[Vec<f64>],
+        learning_rate: &f32,
+        output: &[Vec<f32>],
+        actual: &[Vec<f32>],
         all_saved_hidden_states: &[Vec<LSTMHiddenState>],
-    ) -> f64 {
+    ) -> f32 {
         let batch_size = all_saved_hidden_states.len();
 
         let result = (0..batch_size)
@@ -830,6 +881,6 @@ impl Model {
             learning_rate,
             &(batch_size as i64),
         );
-        result.3 / (batch_size as f64)
+        result.3
     }
 }
