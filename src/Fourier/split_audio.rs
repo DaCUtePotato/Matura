@@ -1,7 +1,6 @@
 use crate::Matrix;
-use bincode::{Decode, Encode, config};
+use bincode::{Decode, Encode};
 use hound::WavReader;
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::BufReader;
 
@@ -25,7 +24,7 @@ pub fn unhound(audio: &mut WavReader<BufReader<File>>) -> Vec<f32> {
     match audio.spec().sample_format {
         hound::SampleFormat::Float => audio
             .samples::<f32>()
-            .map(|s| s.unwrap() as f32)
+            .map(|s| s.unwrap())
             .collect::<Vec<f32>>(),
         hound::SampleFormat::Int => audio
             .samples::<i16>()
@@ -76,8 +75,12 @@ pub fn read_wavs(dir: &str) -> Vec<WavReader<BufReader<File>>> {
     for entry in fs::read_dir(dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.extension().unwrap() == "wav" {
-            results.push(hound::WavReader::open(path).unwrap())
+        if let Some(x) = path.extension() {
+            if x == "wav" {
+                results.push(hound::WavReader::open(path).unwrap())
+            }
+        } else {
+            println!("Found file with no valid extension...");
         }
     }
     results

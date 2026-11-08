@@ -78,9 +78,9 @@ pub fn train_and_evaluate_model(
     let mut trial_best_val_loss = f32::INFINITY;
     let mut loss_window = [f32::INFINITY; PATIENCE];
     let mut epoch = 1;
-    let mut running = true;
 
-    while running {
+    #[allow(while_true)]
+    while true {
         train(
             batch_size,
             learning_rate,
@@ -98,7 +98,6 @@ pub fn train_and_evaluate_model(
 
         // Early stopping check
         if loss_window.iter().filter(|&x| x < &validation_loss).count() == PATIENCE {
-            running = false;
             break;
         }
 

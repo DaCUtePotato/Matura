@@ -6,7 +6,6 @@ use rand::RngExt;
 use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
-use std::f32;
 
 pub fn sigmoid(aaaaa: &[f32]) -> Vec<f32> {
     let mut result: Vec<f32> = vec![];
@@ -146,21 +145,6 @@ impl NN {
         }
         x
     }
-    pub fn new_s1(num_inputs: &usize, num_outputs: &usize) -> Self {
-        let mut x = NN {
-            weights: Matrix::new(num_outputs, num_inputs),
-            biases: vec![],
-        };
-        let mut rng = rand::rng();
-        for i in 0..x.weights.rows {
-            for j in 0..x.weights.columns {
-                x.weights
-                    .set(i, j, xavier_value(&mut rng, num_inputs, num_outputs));
-            }
-            x.biases.push(1.)
-        }
-        x
-    }
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
@@ -226,9 +210,6 @@ impl Matrix {
         self.rows += 1;
         self.data.extend_from_slice(vector);
     }
-    pub fn get_row(&self, row: usize) -> Vec<f32> {
-        self.data[0..row].to_vec()
-    }
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -268,7 +249,7 @@ impl LSTM {
     }
     pub fn new(num_inputs: &usize, num_memory_lane: &usize) -> Self {
         LSTM {
-            s1: NN::new_s1(&(num_inputs + num_memory_lane), num_memory_lane),
+            s1: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             s2: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             t: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             s3: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
@@ -778,8 +759,6 @@ impl Model {
     pub fn forward(&self, frames: &Matrix) -> Vec<f32> {
         let mut memory_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
-        println!("Frames dimensions: {}, {}", frames.rows, frames.columns);
-        println!("Data len: {}", frames.data.len());
         for frame in frames.rows() {
             (main_lane, memory_lane) =
                 LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
@@ -792,15 +771,6 @@ impl Model {
         let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut hidden_states: Vec<LSTMHiddenState> = vec![];
         for frame in frames.rows() {
-            println!(
-                "Min frame: {:?}",
-                frame.iter().fold(f32::INFINITY, |a, &b| a.min(b))
-            );
-            println!(
-                "Max frame: {:?}",
-                frame.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b))
-            );
-
             let state = LSTM::training_forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
             memory_lane = state.memory_lane.clone();
             main_lane = state.main_lane.clone();
@@ -881,6 +851,6 @@ impl Model {
             learning_rate,
             &(batch_size as i64),
         );
-        result.3
+        result.3 / (batch_size as f32)
     }
 }

@@ -1,6 +1,3 @@
-use std::f32::{INFINITY, NEG_INFINITY};
-
-use crate::Matrix;
 use num::Complex;
 // Naïve approach to the Fourier transform.
 // Going from e^(i 2pi k n/N) where k is the
@@ -11,6 +8,7 @@ use num::Complex;
 // that curve. You do that for all samples in the thingy and you get
 // O(n^2). Because symmetry exists, you can reduce that to O(n*log(n))
 // easily but later.
+#[allow(dead_code)]
 pub fn sft(audio: Vec<f32>) -> Vec<Complex<f32>> {
     let mut result: Vec<Complex<f32>> = vec![];
     let len: usize = audio.len();
@@ -79,21 +77,17 @@ fn fft_recursive(audio: &mut [Complex<f32>]) {
 }
 
 // Just a function to convert <Vec<Vec<Complex<f32>>> to Vec<Vec<f32>> by norming the Complex<f32>
-pub fn normVecVecComplex(complexed: &[Vec<Complex<f32>>]) -> Matrix {
-    let mut matrix: Matrix = Matrix::new(&0, &0);
-    for row in complexed {
-        matrix.append(&row.iter().map(|c| c.norm()).collect::<Vec<f32>>())
-    }
-    matrix
+
+pub fn norm_vec_complex_log(complexed: &[Complex<f32>]) -> Vec<f32> {
+    complexed
+        .iter()
+        .map(|s| (s.norm() + 1.).log10())
+        .collect::<Vec<f32>>()
 }
 
-pub fn normVecComplex(complexed: &[Complex<f32>]) -> Vec<f32> {
-    complexed.iter().map(|s| s.norm()).collect::<Vec<f32>>()
-}
-
-pub fn minmax(v: &mut Vec<f32>) {
-    let max = v.iter().fold(NEG_INFINITY, |a, &b| a.max(b));
-    let min = v.iter().fold(INFINITY, |a, &b| a.min(b));
+pub fn minmax(v: &mut [f32]) {
+    let max = v.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let min = v.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     for x in v.iter_mut() {
         *x = (*x - min) / (max - min);
     }

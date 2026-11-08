@@ -1,9 +1,6 @@
-use bincode::{Decode, Encode, config};
+use bincode::config;
 use plotters::prelude::*;
-use std::f32;
-use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::BufReader;
 use std::io::Write;
 
 // This is a file full of helper stuff because main.rs is getting too cluttered at this point
@@ -236,15 +233,21 @@ pub fn write_to_file(path: &str, content: &str) {
     writeln!(file, "{}", content).expect("Ran into issue writing loss");
 }
 
-pub fn split_data(mut data_collection: Vec<Data>, training_split: f32) -> (Vec<Data>, Vec<Data>) {
+pub fn split_data(mut data_collection: Vec<Data>) -> (Vec<Data>, Vec<Data>, Vec<Data>) {
     let mut rng = rng();
     data_collection.shuffle(&mut rng);
-    let split_index = (data_collection.len() as f32 * (1. - training_split)).round() as usize;
-    let training_set = data_collection.split_off(split_index);
-    (training_set, data_collection)
+
+    // Find split indices
+    let train_count = (data_collection.len() as f32 * TRAINING_SPLIT).round() as usize;
+    let val_count = (data_collection.len() as f32 * VALIDATION_SPLIT).round() as usize;
+
+    // Split the data
+    let training_set = data_collection.drain(0..train_count).collect::<Vec<Data>>();
+    let validation_set = data_collection.drain(0..val_count).collect::<Vec<Data>>();
+    (training_set, validation_set, data_collection)
 }
 
-pub fn read_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
+pub fn read_all_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
     let mut data_collection: Vec<Data> = vec![];
     for path in paths {
         let bytes = fs::read(path).expect("Failed to read file");
@@ -255,6 +258,7 @@ pub fn read_data(paths: &[&str; NUM_CLASSES]) -> Vec<Data> {
     data_collection
 }
 
+#[allow(dead_code)]
 pub fn kill_no_kill_ratios(validation_losses: &[f32; PATIENCE], threshold: f32) -> bool {
     validation_losses
         .windows(2)
@@ -301,4 +305,13 @@ pub fn read_model(model_path: &str) -> Model {
     let (model, _): (Model, usize) =
         bincode::decode_from_slice(&bytes, config::standard()).expect("Failed to decode");
     model
+}
+
+pub fn read_data(path: &str) -> Vec<Data> {
+    let mut data_collection: Vec<Data> = vec![];
+    let bytes = fs::read(path).expect("Failed to read file");
+    let (data_collection_temp, _): (Vec<Data>, usize) =
+        bincode::decode_from_slice(&bytes, config::standard()).expect("Failed to decode file");
+    data_collection.extend(data_collection_temp);
+    data_collection
 }
