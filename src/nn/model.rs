@@ -7,23 +7,21 @@ use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
 
-pub fn sigmoid(aaaaa: &[f32]) -> Vec<f32> {
-    let mut result: Vec<f32> = vec![];
-    for i in aaaaa {
-        result.push(1. / (1. + (-i).exp()));
-    }
-    result
+pub fn sigmoid(vector: &[f32]) -> Vec<f32> {
+    vector
+        .iter()
+        .map(|&s| {
+            if s >= 0. {
+                (1.) / (1. + (-s).exp())
+            } else {
+                (s.exp()) / (1. + s.exp())
+            }
+        })
+        .collect::<Vec<f32>>()
 }
 
-pub fn tanh(bbbbb: &[f32]) -> Vec<f32> {
-    let mut result: Vec<f32> = vec![];
-    for i in bbbbb {
-        // major computation save by only computing e^x and e^-x once :oo!!!!!!
-        let ei: f32 = (*i).exp();
-        let mei: f32 = (-i).exp();
-        result.push((ei - mei) / (ei + mei));
-    }
-    result
+pub fn tanh(vector: &[f32]) -> Vec<f32> {
+    vector.iter().map(|s| s.tanh()).collect::<Vec<f32>>()
 }
 
 pub fn linear(input: &[f32], weights: &Matrix, biases: &[f32]) -> Vec<f32> {
@@ -106,9 +104,9 @@ pub fn update_weights_batched(
 }
 
 pub fn outer_product(vector1: &[f32], vector2: &[f32]) -> Matrix {
-    let mut result = Matrix::new(&vector2.len(), &vector1.len());
-    for (i, value1) in vector1.iter().enumerate() {
-        for (j, value2) in vector2.iter().enumerate() {
+    let mut result = Matrix::new(&vector1.len(), &vector2.len());
+    for (i, &value1) in vector1.iter().enumerate() {
+        for (j, &value2) in vector2.iter().enumerate() {
             result.set(i, j, value1 * value2);
         }
     }

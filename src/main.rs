@@ -28,7 +28,7 @@ const TEST_SET_PATH: &str = "test.bin";
 const ALL_PATH: &str = "class-1-m.bin";
 
 // Define model parameters
-const MEMORY_LANE_SIZE: usize = 1024;
+const MEMORY_LANE_SIZE: usize = 256;
 const NUM_CLASSES: usize = 2;
 const BATCH_SIZE: usize = 4;
 
