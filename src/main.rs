@@ -22,9 +22,9 @@ const HOP_SIZE: usize = FRAME_SIZE / 4;
 const LABELS: [[f32; NUM_CLASSES]; NUM_CLASSES] = [[1., 0.], [0., 1.]];
 
 const WAV_PATHS: [&str; NUM_CLASSES] = ["./voices/males/", "./voices/females/"];
-const TRAINING_SET_PATH: &str = "train.bin";
-const VALIDATION_SET_PATH: &str = "validation.bin";
-const TEST_SET_PATH: &str = "test.bin";
+const TRAINING_SET_PATH: &str = "./dataset/train.bin";
+const VALIDATION_SET_PATH: &str = "./dataset/validation.bin";
+const TEST_SET_PATH: &str = "./dataset/test.bin";
 const ALL_PATH: &str = "class-1-m.bin";
 
 // Define model parameters
@@ -33,13 +33,14 @@ const NUM_CLASSES: usize = 2;
 const BATCH_SIZE: usize = 4;
 
 // Define training parameters
-const LEARNING_RATE: f32 = 1e-2; // Initial learning rate
-const DEC_CONST: f32 = 0.08; // For short trainings, fairly fast decay; half-life of ~6 epochs
+const LEARNING_RATE: f32 = 1e-4; // Initial learning rate
+const DEC_CONST: f32 = 0.02; // For short trainings, fairly fast decay; half-life of ~6 epochs
 const MODEL_FILE_PATH: &str = "Timmy.bin";
 const DATA: [&str; NUM_CLASSES] = ["class1.bin", "class2.bin"]; // Data for all classes
 const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
 const START_EXP: f32 = 3e-1; // val loss threshold where exponentially decaying lr should start
 const MIN_DELTA: f32 = 1e-4; // If validation loss changes less than this over PATIENCE, training will be aborted
+const L2_LAMBDA: f32 = 1e-3;
 // Use only if using ratio to stop training
 // const VAL_THRESHOLD: f32 = 0.9; // Validation loss ratio threshold
 
@@ -86,16 +87,18 @@ fn main() {
     }
     if fourier {
         let mut all_data: Vec<Data> = vec![];
+        println!("Going to start processing and collecting all the Data...");
         for x in 0..NUM_CLASSES {
             // Read WAV files
-            let mut audios = read_wavs(WAV_PATHS[x]);
+            let mut paths = read_wav_paths(WAV_PATHS[x]);
 
             // Parallel processing
-            let mut data_collection: Vec<Data> = audios
+            let mut data_collection: Vec<Data> = paths
                 .par_iter_mut()
-                .map(|audio| {
+                .map(|path| {
+                    let mut reader = hound::WavReader::open(path).expect("Failed to open wav");
                     // Split audio
-                    let frames = split_audio(unhound(audio), FRAME_SIZE, HOP_SIZE);
+                    let frames = split_audio(unhound(&mut reader), FRAME_SIZE, HOP_SIZE);
 
                     // Apply Hann windowing algorithm on the windows
                     let hanned = hann(&frames);
@@ -103,10 +106,13 @@ fn main() {
                     // Apply Fourier transform on the "Hanned" windows
                     let mut fourier: Matrix = Matrix::new(&0, &0);
                     for frame in hanned {
-                        let mut appendix = norm_vec_complex_log(&ft(frame));
-                        minmax(&mut appendix);
+                        let appendix = norm_vec_complex_log(&ft(frame));
                         fourier.append(&appendix);
                     }
+
+                    let global_min = min(&fourier.data);
+                    let global_max = max(&fourier.data);
+                    minmax(&mut fourier.data, global_min, global_max);
 
                     // Add the transformed audio to the collection
                     Data {
@@ -117,16 +123,22 @@ fn main() {
                 .collect::<Vec<Data>>();
             all_data.append(&mut data_collection);
         }
+        println!("Finished processing and collecting data...");
         if SPLIT_DATA {
+            println!("Splitting data...");
             let (training_set, val_set, test_set) = split_data(all_data);
+            println!("Data split");
 
             // Encode
+            println!("Encoding training set...");
             let bytes_training: Vec<u8> = bincode::encode_to_vec(&training_set, config::standard())
                 .expect("Failed to serialize training set");
 
+            println!("Encoding validation set...");
             let bytes_val: Vec<u8> = bincode::encode_to_vec(&val_set, config::standard())
                 .expect("Failed to serialize validation set");
 
+            println!("Encoding test set...");
             let bytes_test: Vec<u8> = bincode::encode_to_vec(&test_set, config::standard())
                 .expect("Failed to serialize test set");
 
@@ -134,6 +146,7 @@ fn main() {
             fs::write(TRAINING_SET_PATH, bytes_training).expect("Failed to write training set");
             println!("Training set written successfully...");
 
+            println!("Writing training set");
             fs::write(VALIDATION_SET_PATH, bytes_val).expect("Failed to write validation set");
             println!("Validation set written successfully...");
 
@@ -148,17 +161,15 @@ fn main() {
         }
     }
     if training {
-        let (training_set, validation_set, test_set) = if SPLIT_DATA {
-            (
-                read_data(TRAINING_SET_PATH),
-                read_data(VALIDATION_SET_PATH),
-                read_data(TEST_SET_PATH),
-            )
+        println!("Reading training and validation set...");
+        let (training_set, validation_set) = if SPLIT_DATA {
+            (read_data(TRAINING_SET_PATH), read_data(VALIDATION_SET_PATH))
         } else {
             // Read data from files
             let data = read_all_data(&DATA);
             // Split data into training and validation sets
-            split_data(data)
+            let split = split_data(data);
+            (split.0, split.1)
         };
 
         // Create model
@@ -176,6 +187,7 @@ fn main() {
         let mut current_lr = LEARNING_RATE;
         let mut loss_window = [f32::INFINITY; PATIENCE];
         let mut best_val_loss: f32 = f32::INFINITY;
+        println!("Starting training...");
         while running {
             // For testing:
             // for _ in 0..20 {
@@ -245,6 +257,12 @@ fn main() {
                 "Validation loss difference did not meet expectations..."
             }
         );
+        // Load test set for accuracy calculation (more memory-friendly maybe)
+        let test_set = if SPLIT_DATA {
+            read_data(TEST_SET_PATH)
+        } else {
+            validation_set
+        };
 
         // Print accuracy
         println!("Accuracy: {}", calc_accuracy(&model, &test_set));

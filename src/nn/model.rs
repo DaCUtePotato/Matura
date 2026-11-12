@@ -7,21 +7,46 @@ use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
 
+use crate::L2_LAMBDA;
+
 pub fn sigmoid(vector: &[f32]) -> Vec<f32> {
     vector
         .iter()
         .map(|&s| {
+            assert!(
+                !s.is_nan() && !s.is_infinite(),
+                "Input to sigmoid is NaN/infinite"
+            );
             if s >= 0. {
-                (1.) / (1. + (-s).exp())
+                let result = (1.) / (1. + (-s).exp());
+                assert!(
+                    !result.is_nan() && !result.is_infinite(),
+                    "NaN/infinity found in Sigmoid"
+                );
+                result
             } else {
-                (s.exp()) / (1. + s.exp())
+                let result = (s.exp()) / (1. + s.exp());
+                assert!(
+                    !result.is_nan() && !result.is_infinite(),
+                    "NaN/infinity found in Sigmoid + negative"
+                );
+                result
             }
         })
         .collect::<Vec<f32>>()
 }
 
 pub fn tanh(vector: &[f32]) -> Vec<f32> {
-    vector.iter().map(|s| s.tanh()).collect::<Vec<f32>>()
+    vector
+        .iter()
+        .map(|s| {
+            assert!(
+                !s.is_nan() && !s.is_infinite(),
+                "Input to tanh was NaN/infinite"
+            );
+            s.tanh()
+        })
+        .collect::<Vec<f32>>()
 }
 
 pub fn linear(input: &[f32], weights: &Matrix, biases: &[f32]) -> Vec<f32> {
@@ -30,14 +55,40 @@ pub fn linear(input: &[f32], weights: &Matrix, biases: &[f32]) -> Vec<f32> {
         .chunks(weights.columns)
         .zip(biases.iter())
         .map(|(row_weights, bias)| {
+            assert!(
+                !bias.is_nan() && !bias.is_infinite(),
+                "NaN/infinite bias found in linear"
+            );
             row_weights
                 .iter()
                 .zip(input.iter())
-                .map(|(w, i)| w * i)
+                .map(|(w, i)| {
+                    assert!(
+                        !w.is_nan() && !w.is_infinite(),
+                        "Weight was NaN/infinite in linear"
+                    );
+                    assert!(
+                        !i.is_nan() && !i.is_infinite(),
+                        "Invalid input to linear function"
+                    );
+                    assert!(
+                        !(w * i).is_nan() && !(w * i).is_infinite(),
+                        "Weight with input product yields NaN in linear"
+                    );
+                    w * i
+                })
                 .sum::<f32>()
                 + bias
         })
         .collect()
+}
+
+pub fn max(a: &[f32]) -> f32 {
+    a.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b))
+}
+
+pub fn min(a: &[f32]) -> f32 {
+    a.iter().fold(f32::INFINITY, |a, &b| a.min(b))
 }
 
 pub fn multiply(a: &[f32], b: &[f32]) -> Vec<f32> {
@@ -69,7 +120,7 @@ pub fn xavier_value(rng: &mut ThreadRng, num_inputs: &usize, num_outputs: &usize
 pub fn loss(output: &[f32], actual: &[f32]) -> f32 {
     let mut sum: f32 = 0.;
     for (i, _) in output.iter().enumerate() {
-        sum += -actual[i] * (output[i] + 69e-9).ln();
+        sum += -actual[i] * (output[i] + 69e-15).ln();
     }
     sum
 }
@@ -80,7 +131,8 @@ pub fn update_weights(weights: &mut Matrix, gradient: &Matrix, learning_rate: &f
             weights.set(
                 i,
                 j,
-                weights.get(i, j) - clip(&gradient.get(i, j)) * learning_rate,
+                weights.get(i, j)
+                    - (clip(&gradient.get(i, j)) + L2_LAMBDA * weights.get(i, j)) * learning_rate,
             )
         }
     }
@@ -97,7 +149,9 @@ pub fn update_weights_batched(
             weights.set(
                 i,
                 j,
-                weights.get(i, j) - clip(&gradient.get(i, j)) * learning_rate / batch_size,
+                weights.get(i, j)
+                    - (clip(&(gradient.get(i, j) / batch_size)) + L2_LAMBDA * weights.get(i, j))
+                        * learning_rate,
             )
         }
     }
@@ -114,6 +168,10 @@ pub fn outer_product(vector1: &[f32], vector2: &[f32]) -> Matrix {
 }
 
 pub fn clip(gradient: &f32) -> f32 {
+    assert!(
+        !gradient.is_nan() && !gradient.is_infinite(),
+        "NaN/infinity found in weights/biases updates."
+    );
     gradient.clamp(-1., 1.)
 }
 
@@ -149,7 +207,7 @@ impl NN {
 pub struct Matrix {
     rows: usize,
     columns: usize,
-    data: Vec<f32>,
+    pub data: Vec<f32>,
 }
 
 impl Matrix {

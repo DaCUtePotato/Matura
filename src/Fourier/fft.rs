@@ -85,10 +85,18 @@ pub fn norm_vec_complex_log(complexed: &[Complex<f32>]) -> Vec<f32> {
         .collect::<Vec<f32>>()
 }
 
-pub fn minmax(v: &mut [f32]) {
-    let max = v.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let min = v.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-    for x in v.iter_mut() {
-        *x = (*x - min) / (max - min);
+pub fn minmax(v: &mut [f32], min: f32, max: f32) {
+    let range = max - min;
+
+    // Check if range is too small (since you'd be dividing by it)
+    if range.abs() < f32::EPSILON || !range.is_finite() || range.is_nan() {
+        for x in v.iter_mut() {
+            *x = 0.;
+        }
+    } else {
+        for x in v.iter_mut() {
+            let r = (*x - min) / (max - min);
+            *x = if r.is_finite() && !r.is_nan() { r } else { 0. };
+        }
     }
 }

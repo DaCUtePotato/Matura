@@ -3,6 +3,7 @@ use bincode::{Decode, Encode};
 use hound::WavReader;
 use std::fs::{self, File};
 use std::io::BufReader;
+use std::path::PathBuf;
 
 // This function splits a given wave file of format Vec<f32> into segments
 // that are frame_size long. The overlap is calculated through frame_size-hop_size,
@@ -70,18 +71,16 @@ pub struct Data {
     pub class: Vec<f32>,
 }
 
-pub fn read_wavs(dir: &str) -> Vec<WavReader<BufReader<File>>> {
-    let mut results = Vec::new();
-    for entry in fs::read_dir(dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if let Some(x) = path.extension() {
-            if x == "wav" {
-                results.push(hound::WavReader::open(path).unwrap())
-            }
-        } else {
-            println!("Found file with no valid extension...");
+pub fn read_wav_paths(dir: &str) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = vec![];
+    let entries = fs::read_dir(dir).unwrap();
+    for entry in entries {
+        let path = entry.unwrap().path();
+        if let Some(x) = path.extension()
+            && x == "wav"
+        {
+            paths.push(path);
         }
     }
-    results
+    paths
 }
