@@ -163,7 +163,7 @@ fn main() {
     }
     if training {
         println!("Reading training and validation set...");
-        let (training_set, validation_set) = if SPLIT_DATA {
+        let (mut training_set, validation_set) = if SPLIT_DATA {
             (read_data(TRAINING_SET_PATH), read_data(VALIDATION_SET_PATH))
         } else {
             // Read data from files
@@ -172,6 +172,10 @@ fn main() {
             let split = split_data(data);
             (split.0, split.1)
         };
+
+        let rng = &mut rand::rng();
+
+        training_set.shuffle(rng);
 
         // Create model
         let mut model = if train_continue {
