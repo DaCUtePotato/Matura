@@ -267,6 +267,11 @@ impl Matrix {
         self.rows += 1;
         self.data.extend_from_slice(vector);
     }
+    pub fn half(&mut self) {
+        self.rows /= 2;
+        self.columns /= 2;
+        self.data.truncate(self.data.len() / 2);
+    }
 }
 
 #[allow(clippy::upper_case_acronyms)]

@@ -110,6 +110,7 @@ fn main() {
                         let appendix = norm_vec_complex_log(&ft(frame));
                         fourier.append(&appendix);
                     }
+                    fourier.half();
 
                     let global_min = min(&fourier.data);
                     let global_max = max(&fourier.data);
@@ -183,7 +184,7 @@ fn main() {
             read_model(MODEL_FILE_PATH)
         } else {
             // Create brand-new model
-            Model::new(&FRAME_SIZE, &MEMORY_LANE_SIZE, &NUM_CLASSES)
+            Model::new(&(FRAME_SIZE / 2), &MEMORY_LANE_SIZE, &NUM_CLASSES)
         };
 
         // Initializing dynamic constants for loop
@@ -273,6 +274,7 @@ fn main() {
         println!("Accuracy: {}", calc_accuracy(&model, &test_set));
     }
     if run {
+        println!("This is not going to work; haven't updated run in a while!");
         // Read WAV file and apply framing
         let mut audio = hound::WavReader::open(AUDIO_DIR).unwrap();
         let frames = split_audio(unhound(&mut audio), FRAME_SIZE, HOP_SIZE);
@@ -365,7 +367,7 @@ fn main() {
                 batch_size
             );
 
-            let mut model = Model::new(&FRAME_SIZE, &memory_lane_size, &NUM_CLASSES);
+            let mut model = Model::new(&(FRAME_SIZE / 2), &memory_lane_size, &NUM_CLASSES);
             let val_loss = train_and_evaluate_model(
                 &mut model,
                 &training_set,
