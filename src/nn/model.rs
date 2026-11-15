@@ -267,11 +267,6 @@ impl Matrix {
         self.rows += 1;
         self.data.extend_from_slice(vector);
     }
-    pub fn half(&mut self) {
-        self.rows /= 2;
-        self.columns /= 2;
-        self.data.truncate(self.data.len() / 2);
-    }
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -310,8 +305,11 @@ impl LSTM {
         (output, memory_lane)
     }
     pub fn new(num_inputs: &usize, num_memory_lane: &usize) -> Self {
+        let mut s1 = NN::new(&(num_inputs + num_memory_lane), num_memory_lane);
+        s1.biases.fill(1.);
+
         LSTM {
-            s1: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
+            s1,
             s2: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             t: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
             s3: NN::new(&(num_inputs + num_memory_lane), num_memory_lane),
@@ -879,7 +877,7 @@ impl Model {
     ) -> f32 {
         let batch_size = all_saved_hidden_states.len();
 
-        let result = (0..batch_size)
+        let mut result = (0..batch_size)
             .into_par_iter()
             .map(|i| {
                 let sample = &all_saved_hidden_states[i];
@@ -916,6 +914,27 @@ impl Model {
         apply_momentum(&result.2.sum_s2, &mut shadow_gradients[1]);
         apply_momentum(&result.2.sum_s3, &mut shadow_gradients[2]);
         apply_momentum(&result.2.sum_t, &mut shadow_gradients[3]);
+
+        result
+            .2
+            .sum_s1
+            .data
+            .copy_from_slice(&shadow_gradients[0].data);
+        result
+            .2
+            .sum_s2
+            .data
+            .copy_from_slice(&shadow_gradients[1].data);
+        result
+            .2
+            .sum_s3
+            .data
+            .copy_from_slice(&shadow_gradients[2].data);
+        result
+            .2
+            .sum_t
+            .data
+            .copy_from_slice(&shadow_gradients[3].data);
 
         LSTM::change_weights_batched(
             &mut self.lstm,

@@ -19,6 +19,9 @@ mod nn;
 // Constant used for fouriering and training
 const FRAME_SIZE: usize = 2048;
 const HOP_SIZE: usize = FRAME_SIZE / 4;
+const CUTOFF_FREQ: usize = 8000; // Hz; What frequency to cut off from (for human voices 8k is reasonable)
+const SAMPLE_RATE: usize = 44100;
+const N_BINS: usize = CUTOFF_FREQ * FRAME_SIZE / SAMPLE_RATE; // Since the lower half mirrors the upper half
 const LABELS: [[f32; NUM_CLASSES]; NUM_CLASSES] = [[1., 0.], [0., 1.]];
 
 const WAV_PATHS: [&str; NUM_CLASSES] = ["./voices/males/", "./voices/females/"];
@@ -108,9 +111,8 @@ fn main() {
                     let mut fourier: Matrix = Matrix::new(&0, &0);
                     for frame in hanned {
                         let appendix = norm_vec_complex_log(&ft(frame));
-                        fourier.append(&appendix);
+                        fourier.append(&appendix[0..N_BINS]);
                     }
-                    fourier.half();
 
                     let global_min = min(&fourier.data);
                     let global_max = max(&fourier.data);
@@ -184,7 +186,7 @@ fn main() {
             read_model(MODEL_FILE_PATH)
         } else {
             // Create brand-new model
-            Model::new(&(FRAME_SIZE / 2), &MEMORY_LANE_SIZE, &NUM_CLASSES)
+            Model::new(&N_BINS, &MEMORY_LANE_SIZE, &NUM_CLASSES)
         };
 
         // Initializing dynamic constants for loop
@@ -367,7 +369,7 @@ fn main() {
                 batch_size
             );
 
-            let mut model = Model::new(&(FRAME_SIZE / 2), &memory_lane_size, &NUM_CLASSES);
+            let mut model = Model::new(&N_BINS, &memory_lane_size, &NUM_CLASSES);
             let val_loss = train_and_evaluate_model(
                 &mut model,
                 &training_set,
