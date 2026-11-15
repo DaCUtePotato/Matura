@@ -34,13 +34,14 @@ const BATCH_SIZE: usize = 4;
 
 // Define training parameters
 const LEARNING_RATE: f32 = 1e-4; // Initial learning rate
-const DEC_CONST: f32 = 0.02; // For short trainings, fairly fast decay; half-life of ~6 epochs
+const DEC_CONST: f32 = 0.01; // For short trainings, fairly fast decay; half-life of ~6 epochs
 const MODEL_FILE_PATH: &str = "Timmy.bin";
 const DATA: [&str; NUM_CLASSES] = ["class1.bin", "class2.bin"]; // Data for all classes
 const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
 const START_EXP: f32 = 3e-1; // val loss threshold where exponentially decaying lr should start
 const MIN_DELTA: f32 = 1e-4; // If validation loss changes less than this over PATIENCE, training will be aborted
 const L2_LAMBDA: f32 = 1e-3;
+const MOMENTUM_BETA: f32 = 0.9;
 // Use only if using ratio to stop training
 // const VAL_THRESHOLD: f32 = 0.9; // Validation loss ratio threshold
 
@@ -293,7 +294,9 @@ fn main() {
         );
     }
     if accuracy {
+        println!("Reading model...");
         let model = read_model(MODEL_FILE_PATH);
+        println!("Reading test set...");
         let data = read_data(TEST_SET_PATH);
         println!("Accuracy: {:?}", calc_accuracy(&model, &data))
     }

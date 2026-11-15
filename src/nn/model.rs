@@ -7,29 +7,29 @@ use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
 
-use crate::L2_LAMBDA;
+use crate::{L2_LAMBDA, MOMENTUM_BETA};
 
 pub fn sigmoid(vector: &[f32]) -> Vec<f32> {
     vector
         .iter()
         .map(|&s| {
-            assert!(
-                !s.is_nan() && !s.is_infinite(),
-                "Input to sigmoid is NaN/infinite"
-            );
+            // assert!(
+            //     !s.is_nan() && !s.is_infinite(),
+            //     "Input to sigmoid is NaN/infinite"
+            // );
             if s >= 0. {
                 let result = (1.) / (1. + (-s).exp());
-                assert!(
-                    !result.is_nan() && !result.is_infinite(),
-                    "NaN/infinity found in Sigmoid"
-                );
+                // assert!(
+                //     !result.is_nan() && !result.is_infinite(),
+                //     "NaN/infinity found in Sigmoid"
+                // );
                 result
             } else {
                 let result = (s.exp()) / (1. + s.exp());
-                assert!(
-                    !result.is_nan() && !result.is_infinite(),
-                    "NaN/infinity found in Sigmoid + negative"
-                );
+                // assert!(
+                //     !result.is_nan() && !result.is_infinite(),
+                //     "NaN/infinity found in Sigmoid + negative"
+                // );
                 result
             }
         })
@@ -40,10 +40,10 @@ pub fn tanh(vector: &[f32]) -> Vec<f32> {
     vector
         .iter()
         .map(|s| {
-            assert!(
-                !s.is_nan() && !s.is_infinite(),
-                "Input to tanh was NaN/infinite"
-            );
+            // assert!(
+            //     !s.is_nan() && !s.is_infinite(),
+            //     "Input to tanh was NaN/infinite"
+            // );
             s.tanh()
         })
         .collect::<Vec<f32>>()
@@ -55,32 +55,41 @@ pub fn linear(input: &[f32], weights: &Matrix, biases: &[f32]) -> Vec<f32> {
         .chunks(weights.columns)
         .zip(biases.iter())
         .map(|(row_weights, bias)| {
-            assert!(
-                !bias.is_nan() && !bias.is_infinite(),
-                "NaN/infinite bias found in linear"
-            );
+            // assert!(
+            //     !bias.is_nan() && !bias.is_infinite(),
+            //     "NaN/infinite bias found in linear"
+            // );
             row_weights
                 .iter()
                 .zip(input.iter())
                 .map(|(w, i)| {
-                    assert!(
-                        !w.is_nan() && !w.is_infinite(),
-                        "Weight was NaN/infinite in linear"
-                    );
-                    assert!(
-                        !i.is_nan() && !i.is_infinite(),
-                        "Invalid input to linear function"
-                    );
-                    assert!(
-                        !(w * i).is_nan() && !(w * i).is_infinite(),
-                        "Weight with input product yields NaN in linear"
-                    );
+                    // assert!(
+                    //     !w.is_nan() && !w.is_infinite(),
+                    //     "Weight was NaN/infinite in linear"
+                    // );
+                    // assert!(
+                    //     !i.is_nan() && !i.is_infinite(),
+                    //     "Invalid input to linear function"
+                    // );
+                    // assert!(
+                    //     !(w * i).is_nan() && !(w * i).is_infinite(),
+                    //     "Weight with input product yields NaN in linear"
+                    // );
                     w * i
                 })
                 .sum::<f32>()
                 + bias
         })
         .collect()
+}
+
+pub fn scalar(vector: &mut [f32], scalar: f32) {
+    vector.iter_mut().for_each(|s| *s *= scalar);
+}
+
+pub fn apply_momentum(gradient: &Matrix, shadow_matrix: &mut Matrix) {
+    scalar(&mut shadow_matrix.data, MOMENTUM_BETA);
+    shadow_matrix.madd(gradient);
 }
 
 pub fn max(a: &[f32]) -> f32 {
@@ -144,38 +153,23 @@ pub fn update_weights_batched(
     learning_rate: &f32,
     batch_size: &f32,
 ) {
-    for i in 0..weights.rows {
-        for j in 0..weights.columns {
-            weights.set(
-                i,
-                j,
-                weights.get(i, j)
-                    - (clip(&(gradient.get(i, j) / batch_size)) + L2_LAMBDA * weights.get(i, j))
-                        * learning_rate,
-            )
-        }
-    }
-}
-
-pub fn outer_product(vector1: &[f32], vector2: &[f32]) -> Matrix {
-    let mut result = Matrix::new(&vector1.len(), &vector2.len());
-    for (i, &value1) in vector1.iter().enumerate() {
-        for (j, &value2) in vector2.iter().enumerate() {
-            result.set(i, j, value1 * value2);
-        }
-    }
-    result
+    // Parallel weight updates
+    weights
+        .data
+        .par_iter_mut()
+        .zip(gradient.data.par_iter())
+        .for_each(|(w, g)| *w -= (clip(&(g / batch_size)) + L2_LAMBDA * *w) * learning_rate);
 }
 
 pub fn clip(gradient: &f32) -> f32 {
-    assert!(
-        !gradient.is_nan() && !gradient.is_infinite(),
-        "NaN/infinity found in weights/biases updates."
-    );
+    // assert!(
+    //     !gradient.is_nan() && !gradient.is_infinite(),
+    //     "NaN/infinity found in weights/biases updates."
+    // );
     gradient.clamp(-1., 1.)
 }
 
-// extremely simple, barebones single-layered NN because we only have single-layered ones in lstm :3
+// extremely simple, single-layered NN because we only have single-layered ones in lstm :3
 #[derive(Debug, PartialEq, Encode, Decode)]
 pub struct NN {
     weights: Matrix,
@@ -205,11 +199,10 @@ impl NN {
 
 #[derive(Debug, PartialEq, Encode, Decode)]
 pub struct Matrix {
-    rows: usize,
-    columns: usize,
+    pub rows: usize,
+    pub columns: usize,
     pub data: Vec<f32>,
 }
-
 impl Matrix {
     pub fn new(rows: &usize, columns: &usize) -> Self {
         Matrix {
@@ -230,16 +223,24 @@ impl Matrix {
             .zip(other.data.iter())
             .for_each(|(x1, x2)| *x1 += x2);
     }
-    pub fn transmult(&self, vector: &[f32]) -> Vec<f32> {
-        (0..self.columns)
-            .map(|column| {
-                vector
-                    .iter()
-                    .enumerate()
-                    .map(|(row, value)| self.get(row, column) * value)
-                    .sum()
-            })
-            .collect()
+
+    pub fn add_outer_product(&mut self, a: &[f32], b: &[f32]) {
+        for (row, &ai) in self.data.chunks_mut(self.columns).zip(a) {
+            for (w, &bj) in row.iter_mut().zip(b) {
+                *w += ai * bj;
+            }
+        }
+    }
+
+    pub fn transmult_head(&self, vector: &[f32], n: usize) -> Vec<f32> {
+        let mut result = vec![0.; n];
+        for (row, &v) in vector.iter().enumerate() {
+            let r = &self.data[row * self.columns..row * self.columns + n];
+            for (val, weight) in result.iter_mut().zip(r) {
+                *val += weight * v;
+            }
+        }
+        result
     }
     pub fn clone(&self) -> Self {
         Matrix {
@@ -418,10 +419,10 @@ impl LSTM {
                 ),
                 &tanh(&state.memory_lane),
             );
-            sum_s1.madd(&outer_product(&s1, &state.concatified));
-            sum_s2.madd(&outer_product(&s2, &state.concatified));
-            sum_s3.madd(&outer_product(&s3, &state.concatified));
-            sum_t.madd(&outer_product(&t, &state.concatified));
+            sum_s1.add_outer_product(&s1, &state.concatified);
+            sum_s2.add_outer_product(&s2, &state.concatified);
+            sum_s3.add_outer_product(&s3, &state.concatified);
+            sum_t.add_outer_product(&t, &state.concatified);
 
             bias_grad_s1 = add(&bias_grad_s1, &s1);
             bias_grad_s2 = add(&bias_grad_s2, &s2);
@@ -433,20 +434,22 @@ impl LSTM {
                 .map(|s| s.clamp(-0.5, 0.5))
                 .collect();
 
+            let n = state.main_lane.len();
+
             a_t = add(
                 &add(
-                    &self.s1.weights.transmult(&s1),
-                    &self.s2.weights.transmult(&s2),
+                    &self.s1.weights.transmult_head(&s1, n),
+                    &self.s2.weights.transmult_head(&s2, n),
                 ),
                 &add(
-                    &self.s3.weights.transmult(&s3),
-                    &self.t.weights.transmult(&t),
+                    &self.s3.weights.transmult_head(&s3, n),
+                    &self.t.weights.transmult_head(&t, n),
                 ),
-            )[..state.main_lane.len()]
-                .to_vec()
-                .iter()
-                .map(|s| s.clamp(-0.5, 0.5))
-                .collect();
+            )
+            .to_vec()
+            .iter()
+            .map(|s| s.clamp(-0.5, 0.5))
+            .collect();
         }
         update_weights(&mut self.s1.weights, &sum_s1, learning_rate);
         update_weights(&mut self.s2.weights, &sum_s2, learning_rate);
@@ -560,10 +563,10 @@ impl LSTM {
                 ),
                 &tanh(&state.memory_lane),
             );
-            sum_s1.madd(&outer_product(&s1, &state.concatified));
-            sum_s2.madd(&outer_product(&s2, &state.concatified));
-            sum_s3.madd(&outer_product(&s3, &state.concatified));
-            sum_t.madd(&outer_product(&t, &state.concatified));
+            sum_s1.add_outer_product(&s1, &state.concatified);
+            sum_s2.add_outer_product(&s2, &state.concatified);
+            sum_s3.add_outer_product(&s3, &state.concatified);
+            sum_t.add_outer_product(&t, &state.concatified);
 
             bias_grad_s1 = add(&bias_grad_s1, &s1);
             bias_grad_s2 = add(&bias_grad_s2, &s2);
@@ -575,20 +578,22 @@ impl LSTM {
                 .map(|s| s.clamp(-0.5, 0.5))
                 .collect();
 
+            let n = state.main_lane.len();
+
             a_t = add(
                 &add(
-                    &self.s1.weights.transmult(&s1),
-                    &self.s2.weights.transmult(&s2),
+                    &self.s1.weights.transmult_head(&s1, n),
+                    &self.s2.weights.transmult_head(&s2, n),
                 ),
                 &add(
-                    &self.s3.weights.transmult(&s3),
-                    &self.t.weights.transmult(&t),
+                    &self.s3.weights.transmult_head(&s3, n),
+                    &self.t.weights.transmult_head(&t, n),
                 ),
-            )[..state.main_lane.len()]
-                .to_vec()
-                .iter()
-                .map(|s| s.clamp(-0.5, 0.5))
-                .collect();
+            )
+            .to_vec()
+            .iter()
+            .map(|s| s.clamp(-0.5, 0.5))
+            .collect();
         }
         SumChanges {
             sum_s1,
@@ -865,6 +870,7 @@ impl Model {
         output: &[Vec<f32>],
         actual: &[Vec<f32>],
         all_saved_hidden_states: &[Vec<LSTMHiddenState>],
+        shadow_gradients: &mut [Matrix; 4],
     ) -> f32 {
         let batch_size = all_saved_hidden_states.len();
 
@@ -900,6 +906,11 @@ impl Model {
             .unwrap();
 
         ClassificationHead::apply_changes(&mut self.classification_head, result.1, result.0);
+
+        apply_momentum(&result.2.sum_s1, &mut shadow_gradients[0]);
+        apply_momentum(&result.2.sum_s2, &mut shadow_gradients[1]);
+        apply_momentum(&result.2.sum_s3, &mut shadow_gradients[2]);
+        apply_momentum(&result.2.sum_t, &mut shadow_gradients[3]);
 
         LSTM::change_weights_batched(
             &mut self.lstm,

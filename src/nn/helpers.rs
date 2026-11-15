@@ -59,6 +59,25 @@ pub fn train(
         let mut all_states = Vec::with_capacity(batch_size);
         let mut all_output = Vec::with_capacity(batch_size);
         let mut all_actual = Vec::with_capacity(batch_size);
+        let mut shadow_gradient = [
+            Matrix::new(
+                &MEMORY_LANE_SIZE,
+                &(MEMORY_LANE_SIZE + training_set[0].fourier.columns),
+            ),
+            Matrix::new(
+                &MEMORY_LANE_SIZE,
+                &(MEMORY_LANE_SIZE + training_set[0].fourier.columns),
+            ),
+            Matrix::new(
+                &MEMORY_LANE_SIZE,
+                &(MEMORY_LANE_SIZE + training_set[0].fourier.columns),
+            ),
+            Matrix::new(
+                &MEMORY_LANE_SIZE,
+                &(MEMORY_LANE_SIZE + training_set[0].fourier.columns),
+            ),
+        ];
+
         for batch in &chunks {
             // Clear vectors
             all_states.clear();
@@ -81,7 +100,15 @@ pub fn train(
                 all_output.push(output.to_vec());
             }
 
-            let loss = model.gitgud_batched(&learning_rate, &all_output, &all_actual, &all_states);
+            let loss = model.gitgud_batched(
+                &learning_rate,
+                &all_output,
+                &all_actual,
+                &all_states,
+                &mut shadow_gradient,
+            );
+
+            assert!(!loss.is_nan(), "Loss is NaN");
 
             if let Some(x) = loss_file_path {
                 let mut file = OpenOptions::new()
