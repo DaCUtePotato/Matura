@@ -38,7 +38,7 @@ const BATCH_SIZE: usize = 8;
 // Define training parameters
 const LEARNING_RATE: f32 = 4e-6; // Initial learning rate
 const DEC_CONST: f32 = 0.01; // For short trainings, fairly fast decay; half-life of ~6 epochs
-const MODEL_FILE_PATH: &str = "Timmy.bin";
+const MODEL_FILE_PATH: &str = "gender-8kHz-pooled-91.bin";
 const DATA: [&str; NUM_CLASSES] = ["class1.bin", "class2.bin"]; // Data for all classes
 const PATIENCE: usize = 5; // How many epochs do you let validation loss be less than a threshold?
 const START_EXP: f32 = 3e-1; // val loss threshold where exponentially decaying lr should start
@@ -276,7 +276,6 @@ fn main() {
         println!("Accuracy: {}", calc_accuracy(&model, &test_set));
     }
     if run {
-        println!("This is not going to work; haven't updated run in a while!");
         // Read WAV file and apply framing
         let mut audio = hound::WavReader::open(AUDIO_DIR).unwrap();
         let frames = split_audio(unhound(&mut audio), FRAME_SIZE, HOP_SIZE);
