@@ -7,7 +7,7 @@ use rand::distr::Uniform;
 use rand::rngs::ThreadRng;
 use rayon::prelude::*;
 
-use crate::{L2_LAMBDA, MOMENTUM_BETA};
+use crate::{L2_LAMBDA, MOMENTUM_BETA, NUM_CLASSES};
 
 pub fn sigmoid(vector: &[f32]) -> Vec<f32> {
     vector
@@ -108,6 +108,17 @@ pub fn add(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b.iter()).map(|(a, b)| a + b).collect()
 }
 
+pub fn average(v: &Matrix) -> Vec<f32> {
+    let mut r: Vec<f32> = vec![0.; v.columns];
+    for (i, rr) in r.iter_mut().enumerate() {
+        for vv in v.rows() {
+            *rr += vv[i]
+        }
+    }
+    scalar(&mut r, 1. / (v.rows as f32));
+    r
+}
+
 pub fn concatify(a: &[f32], b: &[f32]) -> Vec<f32> {
     let mut result: Vec<f32> = a.to_vec();
     result.extend_from_slice(b);
@@ -204,6 +215,13 @@ pub struct Matrix {
     pub data: Vec<f32>,
 }
 impl Matrix {
+    pub fn initialize() -> Self {
+        Matrix {
+            rows: 0,
+            columns: 0,
+            data: vec![],
+        }
+    }
     pub fn new(rows: &usize, columns: &usize) -> Self {
         Matrix {
             rows: *rows,
@@ -507,6 +525,8 @@ impl LSTM {
 
         let mut dc_next = vec![0.; gate_size];
         let mut a_t = a_t.to_vec();
+        scalar(&mut a_t, 1. / (saved_hidden_states.len() as f32));
+        let pool_grad = a_t.clone();
         for (i, state) in saved_hidden_states.iter().rev().enumerate() {
             let c_prev = if i + 1 < saved_hidden_states.len() {
                 saved_hidden_states[saved_hidden_states.len() - i - 2]
@@ -585,13 +605,16 @@ impl LSTM {
 
             a_t = add(
                 &add(
-                    &self.s1.weights.transmult_head(&s1, n),
-                    &self.s2.weights.transmult_head(&s2, n),
+                    &add(
+                        &self.s1.weights.transmult_head(&s1, n),
+                        &self.s2.weights.transmult_head(&s2, n),
+                    ),
+                    &add(
+                        &self.s3.weights.transmult_head(&s3, n),
+                        &self.t.weights.transmult_head(&t, n),
+                    ),
                 ),
-                &add(
-                    &self.s3.weights.transmult_head(&s3, n),
-                    &self.t.weights.transmult_head(&t, n),
-                ),
+                &pool_grad,
             )
             .to_vec()
             .iter()
@@ -729,13 +752,11 @@ impl ClassificationHead {
     ) -> (Vec<f32>, Matrix, Vec<f32>) {
         let mut new_loss: Vec<f32> = vec![];
 
-        let classes = output.len();
-
         let batch_size = *batch_size as f32;
 
         for j in 0..input.len() {
             let mut sum = 0.;
-            for i in 0..classes {
+            for i in 0..NUM_CLASSES {
                 sum += (output[i] - actual[i]) * self.n.weights.get(i, j);
             }
             new_loss.push(sum);
@@ -789,8 +810,7 @@ impl SumChanges {
     }
 }
 
-// Yet another struct because of the stupid hidden states that have to be saved
-// in the forward pass during training aaaaaaaaaaaaaaaaaaaaaa helpppp
+// Saved state of the lstm (main lane, input...)
 #[derive(Debug, PartialEq, Encode, Decode)]
 
 pub struct LSTMHiddenState {
@@ -823,24 +843,28 @@ impl Model {
     pub fn forward(&self, frames: &Matrix) -> Vec<f32> {
         let mut memory_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
+        let mut mean: Matrix = Matrix::initialize();
         for frame in frames.rows() {
             (main_lane, memory_lane) =
                 LSTM::forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
+            mean.append(&main_lane)
         }
-        ClassificationHead::forward(&self.classification_head, &main_lane)
+        ClassificationHead::forward(&self.classification_head, &average(&mean))
     }
     // This is where u pull all the stuff u need to backprop
     pub fn train_forward(&self, frames: &Matrix) -> (Vec<LSTMHiddenState>, Vec<f32>) {
         let mut memory_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut main_lane: Vec<f32> = vec![0.; self.num_memory_lane];
         let mut hidden_states: Vec<LSTMHiddenState> = vec![];
+        let mut mean: Matrix = Matrix::initialize();
         for frame in frames.rows() {
             let state = LSTM::training_forward_pass(&self.lstm, &memory_lane, &main_lane, frame);
             memory_lane = state.memory_lane.clone();
             main_lane = state.main_lane.clone();
+            mean.append(&main_lane);
             hidden_states.push(state);
         }
-        let output = ClassificationHead::forward(&self.classification_head, &main_lane);
+        let output = ClassificationHead::forward(&self.classification_head, &average(&mean));
         (hidden_states, output)
     }
     // This is where u call the backprops
@@ -851,12 +875,17 @@ impl Model {
         actual: &[f32],
         saved_hidden_states: &[LSTMHiddenState],
     ) -> f32 {
+        let mut mean: Matrix = Matrix::initialize();
+        for s in saved_hidden_states {
+            mean.append(&s.main_lane)
+        }
+        let input = average(&mean);
         let first_loss = ClassificationHead::gitgud(
             &mut self.classification_head,
             learning_rate,
             actual,
             output,
-            &saved_hidden_states[saved_hidden_states.len() - 1].main_lane,
+            &input,
         );
         LSTM::gitgud(
             &mut self.lstm,
@@ -883,13 +912,17 @@ impl Model {
                 let sample = &all_saved_hidden_states[i];
                 let sample_actual = &actual[i];
                 let sample_output = &output[i];
+                let mut inputs: Matrix = Matrix::initialize();
+                for s in sample {
+                    inputs.append(&s.main_lane);
+                }
 
                 let (change_bias, change_weights, first_loss) =
                     ClassificationHead::calculate_change(
                         &self.classification_head,
                         sample_actual,
                         sample_output,
-                        &sample[sample.len() - 1].main_lane,
+                        &average(&inputs),
                         learning_rate,
                         &(batch_size as i64),
                     );

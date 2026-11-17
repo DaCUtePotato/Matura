@@ -33,10 +33,10 @@ const ALL_PATH: &str = "class-1-m.bin";
 // Define model parameters
 const MEMORY_LANE_SIZE: usize = 256;
 const NUM_CLASSES: usize = 2;
-const BATCH_SIZE: usize = 4;
+const BATCH_SIZE: usize = 8;
 
 // Define training parameters
-const LEARNING_RATE: f32 = 1e-4; // Initial learning rate
+const LEARNING_RATE: f32 = 4e-6; // Initial learning rate
 const DEC_CONST: f32 = 0.01; // For short trainings, fairly fast decay; half-life of ~6 epochs
 const MODEL_FILE_PATH: &str = "Timmy.bin";
 const DATA: [&str; NUM_CLASSES] = ["class1.bin", "class2.bin"]; // Data for all classes
@@ -55,7 +55,7 @@ const VALIDATION_SPLIT: f32 = 0.2;
 const TEST_SPLIT: f32 = 0.1;
 
 // Running parameters
-const AUDIO_DIR: &str = "test2.wav";
+const AUDIO_DIR: &str = "test-male.wav";
 
 // Plotting
 const GRAPH_FILE_PATH: &str = "graph.svg";
@@ -285,8 +285,12 @@ fn main() {
         // Apply Fourier transform on the "Hanned" windows
         let mut fouriered: Matrix = Matrix::new(&0, &0);
         for frame in hanned {
-            fouriered.append(&norm_vec_complex_log(&ft(frame)));
+            let appendix = norm_vec_complex_log(&ft(frame));
+            fouriered.append(&appendix[0..N_BINS]);
         }
+        let global_min = min(&fouriered.data);
+        let global_max = max(&fouriered.data);
+        minmax(&mut fouriered.data, global_min, global_max);
 
         // Read weights
         let model = read_model(MODEL_FILE_PATH);
@@ -306,7 +310,13 @@ fn main() {
         let model = read_model(MODEL_FILE_PATH);
         println!("Reading test set...");
         let data = read_data(TEST_SET_PATH);
-        println!("Accuracy: {:?}", calc_accuracy(&model, &data))
+        println!("Running the model...");
+        println!("Accuracy: {:?}", calc_accuracy(&model, &data));
+        // println!("Running the model for validation loss...");
+        // println!(
+        //     "Validation loss: {:?}",
+        //     calculate_validation_loss(&model, &data, None)
+        // )
     }
     // COMPLETELY LLM-GENERATED!!!!
     if bo {

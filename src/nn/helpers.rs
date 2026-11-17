@@ -206,7 +206,7 @@ pub fn plot_losses(
     chart
         .draw_series(LineSeries::new(
             train_losses.iter().enumerate().map(|(i, &y)| {
-                let epoch_x = (i as f32) * ((num_epochs as f32) / (num_steps as f32));
+                let epoch_x = ((i + 1) as f32) * (num_epochs as f32) / (num_steps as f32);
                 (epoch_x, y)
             }),
             &BLUE.mix(0.6),
@@ -217,7 +217,10 @@ pub fn plot_losses(
     // Plot validation loss (Primary axis)
     chart
         .draw_series(LineSeries::new(
-            val_losses.iter().enumerate().map(|(j, &y)| (j as f32, y)),
+            val_losses
+                .iter()
+                .enumerate()
+                .map(|(j, &y)| ((j + 1) as f32, y)),
             &RED,
         ))?
         .label("Val Loss")
